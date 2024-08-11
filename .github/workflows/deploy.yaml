@@ -138,15 +138,17 @@ jobs:
                           name: blog
                       path: /
                       pathType: Prefix
-              - host: mylxsw.gulu.ai
+              - host: wiki.gulu.ai
                 http: *http
             tls:
               - hosts:
                 - wy.is
-                - mylxsw.gulu.ai
+                - wiki.gulu.ai
                 secretName: blog-http-tls
             ingressClassName: traefik
           EOF
+
+          kubectl apply -f blog.k8s.yaml
 
 
 
