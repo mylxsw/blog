@@ -1,12 +1,5 @@
 {
-  "index": {
-    "type": "page",
-    "title": "Home",
-    "display": "hidden",
-    "theme": {
-      "typesetting": "article"
-    }
-  },
+  
   
   "ai": {
     "title": "AI",
@@ -20,6 +13,15 @@
     "title": "Archive",
     "type": "page"
   },
+
+  "index": {
+    "type": "page",
+    "title": "About",
+    "theme": {
+      "typesetting": "article"
+    }
+  },
+ 
   "contact": {
     "title": "Contact ↗",
     "type": "page",
