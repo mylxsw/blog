@@ -10,35 +10,37 @@
 
 比如，下面的的 SQL 可以查询出数据库 *wizard* 中所有的表以及数据类型，存储引擎。
 
-    mysql> SELECT table_name, table_type, engine
-        -> FROM information_schema.tables
-        -> WHERE table_schema = 'wizard'
-        -> ORDER BY table_name;
-    +----------------------+------------+---------+
-    | table_name           | table_type | engine  |
-    +----------------------+------------+---------+
-    | migrations           | BASE TABLE | InnoDB  |
-    | notifications        | BASE TABLE | InnoDB  |
-    | wz_attachments       | BASE TABLE | InnoDB  |
-    | wz_categories        | BASE TABLE | InnoDB  |
-    | wz_comments          | BASE TABLE | InnoDB  |
-    | wz_groups            | BASE TABLE | InnoDB  |
-    | wz_operation_logs    | BASE TABLE | ARCHIVE |
-    | wz_pages             | BASE TABLE | InnoDB  |
-    | wz_page_histories    | BASE TABLE | InnoDB  |
-    | wz_page_share        | BASE TABLE | InnoDB  |
-    | wz_page_tag          | BASE TABLE | InnoDB  |
-    | wz_password_resets   | BASE TABLE | InnoDB  |
-    | wz_projects          | BASE TABLE | InnoDB  |
-    | wz_project_catalogs  | BASE TABLE | InnoDB  |
-    | wz_project_group_ref | BASE TABLE | InnoDB  |
-    | wz_project_stars     | BASE TABLE | InnoDB  |
-    | wz_tags              | BASE TABLE | InnoDB  |
-    | wz_templates         | BASE TABLE | InnoDB  |
-    | wz_users             | BASE TABLE | InnoDB  |
-    | wz_user_group_ref    | BASE TABLE | InnoDB  |
-    +----------------------+------------+---------+
-    20 rows in set (0.00 sec)
+```bash
+mysql> SELECT table_name, table_type, engine
+    -> FROM information_schema.tables
+    -> WHERE table_schema = 'wizard'
+    -> ORDER BY table_name;
++----------------------+------------+---------+
+| table_name           | table_type | engine  |
++----------------------+------------+---------+
+| migrations           | BASE TABLE | InnoDB  |
+| notifications        | BASE TABLE | InnoDB  |
+| wz_attachments       | BASE TABLE | InnoDB  |
+| wz_categories        | BASE TABLE | InnoDB  |
+| wz_comments          | BASE TABLE | InnoDB  |
+| wz_groups            | BASE TABLE | InnoDB  |
+| wz_operation_logs    | BASE TABLE | ARCHIVE |
+| wz_pages             | BASE TABLE | InnoDB  |
+| wz_page_histories    | BASE TABLE | InnoDB  |
+| wz_page_share        | BASE TABLE | InnoDB  |
+| wz_page_tag          | BASE TABLE | InnoDB  |
+| wz_password_resets   | BASE TABLE | InnoDB  |
+| wz_projects          | BASE TABLE | InnoDB  |
+| wz_project_catalogs  | BASE TABLE | InnoDB  |
+| wz_project_group_ref | BASE TABLE | InnoDB  |
+| wz_project_stars     | BASE TABLE | InnoDB  |
+| wz_tags              | BASE TABLE | InnoDB  |
+| wz_templates         | BASE TABLE | InnoDB  |
+| wz_users             | BASE TABLE | InnoDB  |
+| wz_user_group_ref    | BASE TABLE | InnoDB  |
++----------------------+------------+---------+
+20 rows in set (0.00 sec)
+```
 
 在 MySQL 中，每个用户都有对 **INFORMATION_SCHEMA** 的访问权限，但是只能看到表中他们有权限的对象的信息，也有点些场景下用户如果没有权限，看到的是 NULL。对于 [InnoDB](https://dev.mysql.com/doc/refman/8.0/en/innodb-storage-engine.html) 表来说，必须拥有 [PROCESS](https://dev.mysql.com/doc/refman/8.0/en/privileges-provided.html#priv_process) 权限才能查看。
 
