@@ -3,19 +3,27 @@
     "title": "Home",
     "type": "page"
   },
-  "aidea": {
-    "title": "AIdea",
-    "type": "page",
-    "href": "https://aidea.aicode.cc",
-    "newWindow": true
+  "ai": {
+    "title": "AI",
+    "type": "page"
   },
   "docs": {
     "title": "Docs",
     "type": "page"
   },
+  "translate": {
+      "title": "Translate",
+      "type": "page"
+  },
   "about": {
     "title": "About",
     "type": "page"
+  },
+  "aidea": {
+    "title": "AIdea",
+    "type": "page",
+    "href": "https://aidea.aicode.cc",
+    "newWindow": true
   },
   "contact": {
     "title": "Contact ↗",

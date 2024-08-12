@@ -1,0 +1,58 @@
+# 理解 LSM Trees: 支撑高写入数据库的关键技术
+
+> 英文原文 [Understanding LSM Trees: What Powers Write-Heavy Databases](https://yetanotherdevblog.com/lsm/)
+
+LSM tree （log-structured merge-tree）是通常用于处理大量的写工作负载时使用的数据结构，通过只执行顺序写入来优化写入路径。 LSM Tree 是很多数据库的核心数据结构，包括 **BigTable**，**Cassandra**，**Scylla** 和 **RocksDB** 等。
+
+## SSTables
+
+LSM Tree 使用 SSTable（Sorted Strings Table） 格式持久化到磁盘。通过名称可以看出， SSTable 是一种以有序的方式存储键值对的格式。一个 SSTable 包含了多个称为 **segments** 的有序文件。这些 segments 在写入磁盘后会变为只读的。下面是一个简单的示例：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/output-onlinepngtools--3-.png)
+
+可以看到，在每个 segment 中，键值对都是有序排列的。我们将会在下一部分讨论 segment 是什么和它们是如何生成的。
+
+## Writing Data
+
+回想一下，LSM tree 只会执行顺序的写入。你可能想知道当以任意顺序写入值时，如何以有序的格式顺序写入数据呢？这是通过一种内存的树结构来实现的，我们称之为 **memtable**，它的底层数据结果是通常是一些诸如红黑树等有序树。当写请求到来时，数据被添加到这个红黑树。
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/output-onlinepngtools--4-.png)
+
+在这棵红黑树达到预定义大小之前，我们所有的写操作都会存储在这棵红黑树中。一旦红黑树有了足够多的数据，他就会被以 **segment** 的形式以有序的方式被写入到磁盘。即使插入顺序可能是随机的，我们也可以将这个 segment 文件以顺序的方式写入磁盘。
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/output-onlinepngtools--5-.png)
+
+## Reading Data
+
+接下来我们该如何在 SSTable 中查找一个值呢？最容易想到的方法是以锁要查找的 key 来扫描所有的 segments。我们考科一从最新的 segment 开始扫描，然后依次扫描更旧的 segments，直到找到所需要的 key。这意味着我们在检索最近写入的 key 时会更加快速。一个简单的优化时保持一个内存中的稀疏索引（sparse index）。
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/output-onlinepngtools--6-.png)
+
+我们可以使用这个索引快速的找到所需要的 key 之前和之后的值的偏移量。现在我们只需要基于这些边界去扫描每个 segment 文件的一小部分内容就可以了。例如，我们考虑这样一个场景，我们想要在上述的 segment 中查找 key  `dollar`，我们可以在稀疏索引中使用二分查找法找到 `dollar` 在 `dog` 和 `downgrade` 之间。现在我们只需要从偏移 `17208` 到 `19504` 这个范围内扫描就可以找到我们的值了（或者是确定它不存在）。
+
+这是一个非常棒的提升，但是如果我们查找的 key 不存在的话怎么办？我们依然需要遍历所有的 segments 文件，并且在每一个 segment 文件中都查找失败。使用 `bloom filter`（布隆过滤器）可以帮助我们，布隆过滤器是一种非常节省空间的数据结构，它可以告诉我们一个值在我们的数据中是不存在的。在写入数据的时候，我们可以将它们添加到布隆过滤器，然后在开始读的时候检查它来更加高效的响应 key 不存在的请求。
+
+## Compaction
+
+随着时间流逝，系统持续运行过程中将会累积越来越多的 segment 文件。为了避免这些 segments 文件数量失控，我们需要清理和维护这些文件，这就是 **compaction** 进程的职责。 **Compaction** 进程是一个后台进程，它会持续的将老的 segments 合并为新的 segments。
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/output-onlinepngtools--7-.png)
+
+从上面的例子中可以看到 segments 1 和 2 都有一个 key 为 `dog`，新的 segments 包含最后写入的值，因此 segment 2 中的值会被合并到 segment 4。一旦 compaction 进程完成新的 segment 写入，老的 segment 文件就会被删除。
+
+## 删除数据
+
+我们已经讲了对数据的读写操作，那么怎么删除数据呢？因为 SSTable 所在的 segment 是只读的，我们如何从中删除数据呢？其实删除数据和写入数据的方式是一样的，当删除请求到来时，我们会为这个 key 写入一个称为 `tombstone`（墓碑）的唯一标记。
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/output-onlinepngtools--8-.png)
+
+在上面的例子中，在过去的某个时间点，key `dog` 的值是 52, 但是现在他有一个墓碑标记。这表示如果我们接收到了对 key `dog` 的查询，我们应该返回一个表明这个 key 不存在的响应。这意味着数据删除之后，在最初依然会占用磁盘空间，很多开发人员可能会对此感到惊讶。最终，墓碑将会被压缩掉，之后磁盘上就不会存在该值了。
+
+## 结论
+
+我们现在理解了一个基础的 LSM Tree 存储引擎是如何工作的：
+
+- 写请求会存储在一个内存树（也称为 `memtable`），如果需要的话，任何支持的数据结构（布隆过滤器和稀疏索引）也会被更新。
+- 当内存中的树太大了的时候，它会被以有序的方式写入磁盘。
+- 当收到读请求的时候，会先检查布隆过滤器，如果布隆过滤器返回这个值不存在，则我们会直接告诉客户端这个 key 不存在。如果布隆过滤器返回 value 存在，则我们将开始从新到旧遍历 segment 文件。
+- 对于每一个 segment 文件，我们会检查它的稀疏索引，并扫描我们期望找到 key 的位置的偏移量，知道找到 key 为止。在 segment 文件中找到该值之后，我们会立即返回该值。

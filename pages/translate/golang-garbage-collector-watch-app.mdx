@@ -1,0 +1,100 @@
+# Go 垃圾收集器如何监控你的应用程序？
+
+> 本文基于 Go 1.13，英文原文：[Go: How Does the Garbage Collector Watch Your Application?](https://medium.com/a-journey-with-go/go-how-does-the-garbage-collector-watch-your-application-dbef99be2c35)
+
+Go 垃圾收集器通过自动的释放应用程序不再需要的内存来帮助开发人员。但是，跟踪并清理内存可能会对我们的程序性能产生一定的影响。Go 垃圾收集器旨在实现这些目标，并且专注于：
+
+- 尽可能的减少程序停止的两个阶段（STOP THE WORLD）
+- 垃圾收集器的运行周期少于 10ms
+- 垃圾收集器的运行周期不能占用超过 25% 的 CPU
+
+这些都是雄心勃勃的目标，如果垃圾收集器能够从我们的应用中获取到足够多的信息，它就能够实现这些目标。
+
+## Heap Threshold Reached
+
+垃圾收集器的第一个维度是监控堆内存的增长。默认情况下它会在堆内存两倍大小时运行。下面是一个在循环中分配内存的简单应用：
+
+```go
+func BenchmarkAllocationEveryMs(b *testing.B) {
+	// need permanent allocation to clear see when the heap double its size
+	var s *[]int
+	tmp := make([]int, 1100000, 1100000)
+	s = &tmp
+
+	var a *[]int
+	for i := 0; i < b.N; i++  {
+		tmp := make([]int, 10000, 10000)
+		a = &tmp
+
+		time.Sleep(time.Millisecond)
+	}
+	_ = a
+	runtime.KeepAlive(s)
+}
+```
+
+下图的 Traces 信向我们展示了垃圾收集器是何时被触发的：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/20210416105510.png)
+
+一旦堆内存达到了两倍大小，内存分配器就会触发垃圾收集器。可以通过选项 `GODEBUG=gctrace=1` 输出运行周期的信息来确认这一过程：
+
+```
+gc 8 @0.251s 0%: 0.004+0.11+0.003 ms clock, 0.036+0/0.10/0.15+0.028 ms cpu, 16->16->8 MB, 17 MB goal, 8 P
+gc 9 @0.389s 0%: 0.005+0.11+0.007 ms clock, 0.041+0/0.090/0.11+0.062 ms cpu, 16->16->8 MB, 17 MB goal, 8 P
+gc 10 @0.526s 0%: 0.046+0.24+0.014 ms clock, 0.37+0/0.14/0.23+0.11 ms cpu, 16->16->8 MB, 17 MB goal, 8 P
+```
+
+第9个周期是我们前面看到的运行了 389ms 的那个周期。有趣的部分是 `16->16->8 MB` ，这里展示了在垃圾收集器运行之前有多少内存在使用，在垃圾收集器运行之后还有多少内存活跃。我们可以清晰的看到当第 8 个周期将内存减少到 8MB 之后，第 9 个周期在内存到达 16 MB 的时候被触发了。
+
+这个阈值的比率是由环境变量 `GOGC` 来定义的，默认情况下是 100% —— 这意味着当堆内存增长 100% 的时候启动垃圾收集器。基于性能考虑，为了避免不断的开始收集周期，如果堆内存小于 `4MB * GOGC`，则不会触发垃圾收集器 —— 当 GOGC 设置为 100% 时，当堆内存小于 4MB 的时候不会触发垃圾收集。
+
+## Time Threshold Reached
+
+垃圾收集器的第二个维度是监控两个垃圾收集器的延迟。如果在两分钟内没有被触发过，则会强制启动一个收集周期。
+
+下面的 Traces 显示了当启用 `GODBUG` 选项时，在两分钟后强制启动垃圾收集：
+
+```
+GC forced
+gc 15 @121.340s 0%: 0.058+1.2+0.015 ms clock, 0.46+0/2.0/4.1+0.12 ms cpu, 1->1->1 MB, 4 MB goal, 8 P
+```
+
+## Required Assistance
+
+垃圾收集器主要由两个阶段组成：
+
+- 标记正在使用中的内存
+- 交换未被标记为使用中的内存
+
+在标记阶段，Go 必须保证标记内存的速度比新分配内存的速度更快。实际上，如果收集器标记了 4Mb 的内存，而在同一时间段内，程序分配了相同数量的内存，则垃圾收集器必须完成之后立即被再次触发。
+
+为了解决这个问题，Go 在标记内存的同时会跟踪新分配的内存，并且监控垃圾收集器什么时候是处于负债状态。当垃圾收集器被触发时，第一个步骤先开始，它首先会为每个准备睡眠的处理器准备一个 Goroutine 等待标记阶段：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/20210416111708.png)
+
+下面的 Trace 展示了这些 Goroutines：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/20210416111818.png)
+
+一旦产生了这些 Goroutines ，垃圾收集器将会开始标记阶段，该阶段将会检查应该收集和清除哪些变量。标记为 GC 专用 的 Goroutine 将会在没有抢占的情况下运行标记过程，标记为空闲的 Goroutines 则继续工作，因为它们没有任何可做的事情，它们可以被抢占。
+
+垃圾收集器现在已经准备标记不再使用的变量了。对于每一个被扫描到的变量，它将会增加一个计数器来跟踪当前的工作和对剩余的工作有个了解。在垃圾收集期间，如果一个 Goroutine 被安排了工作，Go 将会比较分配需求和已完成的扫描，以便比较扫描速度和分配的需求。如果比较的结果对扫描是肯定的，则当前 Goroutine 不需要帮助，另一方面，如果与分配相比扫描处于负债状态，则 Go 将会使用 Goroutine 协助。下图反映了这里的逻辑：
+
+![](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/20210416113141.png)
+
+在我们的例子中，Goroutine 14 被要求协助：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/20210416113255.png)
+
+## CPU limitation
+
+Go 垃圾收集器的另一个目标是不能使用超过 25% 的 CPU。这意味着在标记阶段， Go 不应该使用超过 1/4 的处理器。实际上这正是我们前面示例中看到的，在 8 个处理器中，只有两个 Goroutines 完全用于垃圾收集。
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/20210416113753.png)
+
+如我们所见，其它的 Goroutines 只有在没有其它事情可做的情况下才会在标记阶段起作用。但是，当垃圾收集器发出协助请求时，Go 应用可能会在高峰时段内忽略只能使用 25% 的 CPU 这个限制，如 Goroutine 14 所示：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/20210416114144.png)
+
+在我们的例子中，在一个很短的时间周期内，大约 37.5% （3/8）的处理器被用于标记阶段。这种情况非常少见，只有在分配很频繁的时候才会发生。

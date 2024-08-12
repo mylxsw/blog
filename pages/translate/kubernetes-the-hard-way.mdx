@@ -1,0 +1,2020 @@
+# Kubernetes the hard way
+
+## 前提条件
+
+### Google Cloud Platform
+
+本教程使用 Google Cloud Platform 作为创建 Kubernetes 集群的基础设施环境。
+
+### Google Cloud Platform SDK
+
+#### 安装 Google Cloud Platform SDK
+
+按照 Google Cloud SDK [文档](https://cloud.google.com/sdk/)来安装并配置 `gcloud` 命令行工具。验证 Google Cloud SDK 版本为 338.0.0 或者更高：
+
+```bash
+gcloud version
+```
+
+#### 设置默认的 Region 和 Zone
+
+本教程假设使用默认的 Region 和 Zone。如果你是第一次使用 `gcloud` 命令，最简单的方法是执行 `init` 命令：
+
+```bash
+gcloud init
+```
+
+接下来确保使用 Google 账号登录到云平台
+
+```bash
+gcloud auth login
+```
+
+下一步是设置一个默认的 Region 和 Zone
+
+```bash
+gcloud config set compute/region us-west1
+```
+
+设置默认的 Zone
+
+```bash
+gcloud config set compute/zone us-west1-c
+```
+
+> 使用 `gcloud compute zones list` 可以查看其它的 Region 和 Zone。
+
+## 安装客户端工具
+
+本教程需要安装 [cfssl](https://github.com/cloudflare/cfssl)，[cfssljson](https://github.com/cloudflare/cfssl) 和 [kubectl](https://kubernetes.io/docs/tasks/tools/install-kubectl) 这几个命令行工具。
+
+### 安装 CFSSL
+
+命令行工具 cfssl 和 cfssljson 用来生成一个 PKI 基础设施和 TLS 证书。
+
+#### OSX
+
+```bash
+curl -o cfssl https://storage.googleapis.com/kubernetes-the-hard-way/cfssl/1.4.1/darwin/cfssl
+curl -o cfssljson https://storage.googleapis.com/kubernetes-the-hard-way/cfssl/1.4.1/darwin/cfssljson
+
+chmod +x cfssl cfssljson
+sudo mv cfssl cfssljson /usr/local/bin/
+```
+
+也可以使用 [Homebrew](https://brew.sh/) 来进行安装
+
+```bash
+brew install cfssl
+```
+
+#### Linux
+
+```bash
+wget -q --show-progress --https-only --timestamping \
+  https://storage.googleapis.com/kubernetes-the-hard-way/cfssl/1.4.1/linux/cfssl \
+  https://storage.googleapis.com/kubernetes-the-hard-way/cfssl/1.4.1/linux/cfssljson
+
+chmod +x cfssl cfssljson
+sudo mv cfssl cfssljson /usr/local/bin/
+```
+
+#### 验证
+
+验证 cfssl 和 cfssljson 的版本为 1.4.1 或者更高。
+
+```bash
+$ cfssl version
+Version: 1.4.1
+Runtime: go1.12.12
+
+$ cfssljson --version
+Version: 1.4.1
+Runtime: go1.12.12
+```
+
+### 安装 kubectl
+
+命令行工具 `kubectl` 用于和 Kubernetes API Server 进行交互。从官方网站下载和安装 kubectl
+
+#### OSX
+
+```bash
+curl -o kubectl https://storage.googleapis.com/kubernetes-release/release/v1.21.0/bin/darwin/amd64/kubectl
+chmod +x kubectl
+sudo mv kubectl /usr/local/bin/
+```
+
+#### Linux
+
+```bash
+wget https://storage.googleapis.com/kubernetes-release/release/v1.21.0/bin/linux/amd64/kubectl
+chmod +x kubectl
+sudo mv kubectl /usr/local/bin/
+```
+
+#### 验证
+
+```bash
+$ kubectl version --client
+Client Version: version.Info{Major:"1", Minor:"21", GitVersion:"v1.21.0", GitCommit:"cb303e613a121a29364f75cc67d3d580833a7479", GitTreeState:"clean", BuildDate:"2021-04-08T16:31:21Z", GoVersion:"go1.16.1", Compiler:"gc", Platform:"linux/amd64"}
+```
+
+## 准备计算资源
+
+Kubernetes 需要多台服务器来运行控制面和工作节点（容器最终在这里运行）。在本教程中，我们将会准备一些在单个可用区中，用于运行一个安全并且高可用的 Kubernetes 集群所需要的资源。
+
+### 网络
+
+Kubernetes 的网络模型假设了一个容器和节点可以互相通信的扁平网络。在不需要的情况下，网络策略也可以限制容器组互相通信以及与外部网络通信的方式。
+
+> 建立网络策略不在本文讨论范围内。
+
+#### 虚拟私有云
+
+在这部分我们将创建一个虚拟私有云 （VPC）来托管我们的 Kubernetes 集群。
+
+创建 `kubernetes-the-hard-way` 自定义 VPC 网络:
+
+```bash
+gcloud compute networks create kubernetes-the-hard-way --subnet-mode custom
+```
+
+我们必须为子网提供足够大的 IP 地址范围，以便 Kubernetes 集群中的每个节点都能分配一个私有的 IP 地址。
+
+在 `kubernetes-the-hard-way` VPC 网络中创建一个 `kubernetes` 子网：
+
+```bash
+gcloud compute networks subnets create kubernetes \
+  --network kubernetes-the-hard-way \
+  --range 10.240.0.0/24
+```
+
+> IP 地址范围 `10.240.0.0/24` 可以托管 254 个计算实例。
+
+#### 防火墙规则
+
+创建一个防火墙规则用于允许所有协议的内网通信：
+
+```bash
+gcloud compute firewall-rules create kubernetes-the-hard-way-allow-internal \
+  --allow tcp,udp,icmp \
+  --network kubernetes-the-hard-way \
+  --source-ranges 10.240.0.0/24,10.200.0.0/16
+```
+
+创建一条防火墙规则用于允许 SSH，ICMP 和 HTTPS 协议：
+
+```bash
+gcloud compute firewall-rules create kubernetes-the-hard-way-allow-external \
+  --allow tcp:22,tcp:6443,icmp \
+  --network kubernetes-the-hard-way \
+  --source-ranges 0.0.0.0/0
+```
+
+> 一个[外部的负载均衡器](https://cloud.google.com/compute/docs/load-balancing/network/)将会被用来暴露 Kubernetes API Server 给远程客户端。
+
+列出 `kubernetes-the-hard-way` VPC 网络中的防火墙规则
+
+```bash
+$ gcloud compute firewall-rules list --filter="network:kubernetes-the-hard-way"
+NAME                                    NETWORK                  DIRECTION  PRIORITY  ALLOW                 DENY  DISABLED
+kubernetes-the-hard-way-allow-external  kubernetes-the-hard-way  INGRESS    1000      tcp:22,tcp:6443,icmp        False
+kubernetes-the-hard-way-allow-internal  kubernetes-the-hard-way  INGRESS    1000      tcp,udp,icmp                False
+```
+
+#### Kubernetes 公开 IP 地址
+
+为 Kubernetes API Server 的负载均衡器分配一个静态的 IP 地址
+
+```bash
+gcloud compute addresses create kubernetes-the-hard-way \
+  --region $(gcloud config get-value compute/region)
+```
+
+验证静态 IP 地址
+
+```bash
+$ gcloud compute addresses list --filter="name=('kubernetes-the-hard-way')"
+NAME                     ADDRESS/RANGE   TYPE      PURPOSE  NETWORK  REGION    SUBNET  STATUS
+kubernetes-the-hard-way  XX.XXX.XXX.XXX  EXTERNAL                    us-west1          RESERVED
+```
+
+### 计算实例
+
+本教程中使用的计算实例系统版本为 Ubuntu Server 20.04，它可以非常好的支持容器运行时间。每一个计算实例都会有一个固定的私有 IP 地址。
+
+####  Kubernetes Controllers
+
+创建三个计算实例用于 Kubernetes 的控制面：
+
+```bash
+for i in 0 1 2; do
+  gcloud compute instances create controller-${i} \
+    --async \
+    --boot-disk-size 200GB \
+    --can-ip-forward \
+    --image-family ubuntu-2004-lts \
+    --image-project ubuntu-os-cloud \
+    --machine-type e2-standard-2 \
+    --private-network-ip 10.240.0.1${i} \
+    --scopes compute-rw,storage-ro,service-management,service-control,logging-write,monitoring \
+    --subnet kubernetes \
+    --tags kubernetes-the-hard-way,controller
+done
+```
+
+#### Kubernetes Workers
+
+每一个 Worker 实例都需要从 Kubernetes 集群 CIDR 范围中分配一个 POD 的子网。 POD 子网用于配置容器网络。我们添加了一个 `pod-cidr` 的实例 metadata 用于在运行时获取。
+
+> Kubernetes 集群 CIDR 范围由 Controller Manager 的 `--cluster-cidr` 命令行选项来控制。在本教程中，集群的 CIDR 范围将会被设置为 `10.200.0.0/16`，支持 254 个子网。
+
+创建三个计算实例用于 Kubernetes 工作节点
+
+```bash
+for i in 0 1 2; do
+  gcloud compute instances create worker-${i} \
+    --async \
+    --boot-disk-size 200GB \
+    --can-ip-forward \
+    --image-family ubuntu-2004-lts \
+    --image-project ubuntu-os-cloud \
+    --machine-type e2-standard-2 \
+    --metadata pod-cidr=10.200.${i}.0/24 \
+    --private-network-ip 10.240.0.2${i} \
+    --scopes compute-rw,storage-ro,service-management,service-control,logging-write,monitoring \
+    --subnet kubernetes \
+    --tags kubernetes-the-hard-way,worker
+done
+```
+
+#### 验证
+
+列出在默认可用区中的计算实例列表
+
+```bash
+$ gcloud compute instances list --filter="tags.items=kubernetes-the-hard-way"
+NAME          ZONE        MACHINE_TYPE   PREEMPTIBLE  INTERNAL_IP  EXTERNAL_IP    STATUS
+controller-0  us-west1-c  e2-standard-2               10.240.0.10  XX.XX.XX.XXX   RUNNING
+controller-1  us-west1-c  e2-standard-2               10.240.0.11  XX.XXX.XXX.XX  RUNNING
+controller-2  us-west1-c  e2-standard-2               10.240.0.12  XX.XXX.XX.XXX  RUNNING
+worker-0      us-west1-c  e2-standard-2               10.240.0.20  XX.XX.XXX.XXX  RUNNING
+worker-1      us-west1-c  e2-standard-2               10.240.0.21  XX.XX.XX.XXX   RUNNING
+worker-2      us-west1-c  e2-standard-2               10.240.0.22  XX.XXX.XX.XX   RUNNING
+```
+
+## 准备 CA 证书以及生成 TLS证书
+
+在本教程中，我们将会使用 CloudFlare 的 PKI 工具创建一个 PKI 基础设施，然后用它来作为我们的证书授权中心，然后为 etcd、kube-apiserver、kube-controller-manager、kube-scheduler、kubelet 和 kube-proxy 生成 TLS 证书。
+
+### 证书授权中心
+
+在本部分我们将会准备一个证书授权中心用于生成其它的 TLS 证书。
+
+生成 CA 配置文件，证书和私钥：
+
+```bash
+cat > ca-config.json <<EOF
+{
+  "signing": {
+    "default": {
+      "expiry": "8760h"
+    },
+    "profiles": {
+      "kubernetes": {
+        "usages": ["signing", "key encipherment", "server auth", "client auth"],
+        "expiry": "8760h"
+      }
+    }
+  }
+}
+EOF
+
+cat > ca-csr.json <<EOF
+{
+  "CN": "Kubernetes",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "Kubernetes",
+      "OU": "CA",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+cfssl gencert -initca ca-csr.json | cfssljson -bare ca
+```
+
+生成两个文件
+
+```bash
+ca-key.pem
+ca.pem
+```
+
+### 客户端和服务器证书
+
+本部分将会为每一个 Kubernetes 组件生成客户端和服务端证书，并且生成一个 Kubernetes 的 `admin` 用户的客户端证书。
+
+#### 管理员客户端证书
+
+```bash
+cat > admin-csr.json <<EOF
+{
+  "CN": "admin",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "system:masters",
+      "OU": "Kubernetes The Hard Way",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+cfssl gencert \
+  -ca=ca.pem \
+  -ca-key=ca-key.pem \
+  -config=ca-config.json \
+  -profile=kubernetes \
+  admin-csr.json | cfssljson -bare admin
+```
+
+生成文件 
+
+```bash
+admin-key.pem
+admin.pem
+```
+
+#### Kubelet 客户端证书
+
+Kubernetes 使用一种叫做 Node Authorizer 的[特殊授权方法](https://kubernetes.io/docs/admin/authorization/node/) 来对 Kubelet 发起的 API 请求进行鉴权。为了能够使用 Node Authorizer 进行鉴权，Kubelet 必须使用一个能够标识它属于 `system:nodes` 组，用户名为 `system:node:<nodeName>` 的凭据。在本部分我们将会创建一个用于让每一个 Kubernetes 工作节点都满足 Node Authorizer 要求的证书。
+
+为每一个工作节点生成证书和私钥：
+
+```bash
+for instance in worker-0 worker-1 worker-2; do
+cat > ${instance}-csr.json <<EOF
+{
+  "CN": "system:node:${instance}",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "system:nodes",
+      "OU": "Kubernetes The Hard Way",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+EXTERNAL_IP=$(gcloud compute instances describe ${instance} \
+  --format 'value(networkInterfaces[0].accessConfigs[0].natIP)')
+
+INTERNAL_IP=$(gcloud compute instances describe ${instance} \
+  --format 'value(networkInterfaces[0].networkIP)')
+
+cfssl gencert \
+  -ca=ca.pem \
+  -ca-key=ca-key.pem \
+  -config=ca-config.json \
+  -hostname=${instance},${EXTERNAL_IP},${INTERNAL_IP} \
+  -profile=kubernetes \
+  ${instance}-csr.json | cfssljson -bare ${instance}
+done
+```
+
+输出下面几个文件
+
+```bash
+worker-0-key.pem
+worker-0.pem
+worker-1-key.pem
+worker-1.pem
+worker-2-key.pem
+worker-2.pem
+```
+
+#### Controller Manager 客户端证书
+
+```bash
+cat > kube-controller-manager-csr.json <<EOF
+{
+  "CN": "system:kube-controller-manager",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "system:kube-controller-manager",
+      "OU": "Kubernetes The Hard Way",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+cfssl gencert \
+  -ca=ca.pem \
+  -ca-key=ca-key.pem \
+  -config=ca-config.json \
+  -profile=kubernetes \
+  kube-controller-manager-csr.json | cfssljson -bare kube-controller-manager
+```
+
+输出文件
+
+```bash
+kube-controller-manager-key.pem
+kube-controller-manager.pem
+```
+
+#### Kube Proxy 客户端证书
+
+生成 `kube-proxy` 客户端证书和私钥
+
+```bash
+cat > kube-proxy-csr.json <<EOF
+{
+  "CN": "system:kube-proxy",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "system:node-proxier",
+      "OU": "Kubernetes The Hard Way",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+cfssl gencert \
+  -ca=ca.pem \
+  -ca-key=ca-key.pem \
+  -config=ca-config.json \
+  -profile=kubernetes \
+  kube-proxy-csr.json | cfssljson -bare kube-proxy
+
+```
+
+输出文件
+
+```bash
+kube-proxy-key.pem
+kube-proxy.pem
+```
+
+#### Scheduler 客户端证书
+
+生成 `kube-scheduler` 客户端证书和私钥
+
+```bash
+cat > kube-scheduler-csr.json <<EOF
+{
+  "CN": "system:kube-scheduler",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "system:kube-scheduler",
+      "OU": "Kubernetes The Hard Way",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+cfssl gencert \
+  -ca=ca.pem \
+  -ca-key=ca-key.pem \
+  -config=ca-config.json \
+  -profile=kubernetes \
+  kube-scheduler-csr.json | cfssljson -bare kube-scheduler
+```
+
+输出文件
+
+```bash
+kube-scheduler-key.pem
+kube-scheduler.pem
+```
+
+#### Kubernetes API Server 证书
+
+在 Kubernetes API Server 的证书中将会包含 `kubernetes-the-hard-way` 的静态 IP 地址，这样可以确保远程客户端可以验证该证书。
+
+生成 Kubernetes API Server 证书和私钥：
+
+```bash
+KUBERNETES_PUBLIC_ADDRESS=$(gcloud compute addresses describe kubernetes-the-hard-way \
+  --region $(gcloud config get-value compute/region) \
+  --format 'value(address)')
+
+KUBERNETES_HOSTNAMES=kubernetes,kubernetes.default,kubernetes.default.svc,kubernetes.default.svc.cluster,kubernetes.svc.cluster.local
+
+cat > kubernetes-csr.json <<EOF
+{
+  "CN": "kubernetes",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "Kubernetes",
+      "OU": "Kubernetes The Hard Way",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+cfssl gencert \
+  -ca=ca.pem \
+  -ca-key=ca-key.pem \
+  -config=ca-config.json \
+  -hostname=10.32.0.1,10.240.0.10,10.240.0.11,10.240.0.12,${KUBERNETES_PUBLIC_ADDRESS},127.0.0.1,${KUBERNETES_HOSTNAMES} \
+  -profile=kubernetes \
+  kubernetes-csr.json | cfssljson -bare kubernetes
+```
+
+> Kubernetes API Server 会自动的设置一个 `kubernetes`的内部 DNS 名称，它将会被用来链接到地址范围 `10.32.0.0/24` 的第一个 IP 地址 （10.32.0.1）。
+
+输出
+
+```bash
+kubernetes-key.pem
+kubernetes.pem
+```
+
+### Service Account Key Pair
+
+Kubernetes Controller Manager 利用秘钥对生成和签署 [Service Account 令牌](https://kubernetes.io/docs/admin/service-accounts-admin/)。
+
+生成 `service-account` 证书和私钥：
+
+```bash
+cat > service-account-csr.json <<EOF
+{
+  "CN": "service-accounts",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "Kubernetes",
+      "OU": "Kubernetes The Hard Way",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+cfssl gencert \
+  -ca=ca.pem \
+  -ca-key=ca-key.pem \
+  -config=ca-config.json \
+  -profile=kubernetes \
+  service-account-csr.json | cfssljson -bare service-account
+```
+
+输出
+
+```bash
+service-account-key.pem
+service-account.pem
+```
+
+### 分发客户端和服务端证书
+
+拷贝相关证书和私钥到每一个工作节点：
+
+```bash
+for instance in worker-0 worker-1 worker-2; do
+  gcloud compute scp ca.pem ${instance}-key.pem ${instance}.pem ${instance}:~/
+done
+```
+
+拷贝相关证书和私钥到每一个控制节点：
+
+```bash
+for instance in controller-0 controller-1 controller-2; do
+  gcloud compute scp ca.pem ca-key.pem kubernetes-key.pem kubernetes.pem \
+    service-account-key.pem service-account.pem ${instance}:~/
+done
+```
+
+> 客户端证书 `kube-proxy`，`kube-controller-manager`，`kube-scheduler` 和 `kubelet` 用来在下一节中生成客户端认证配置。
+
+## 生成 Kubernetes 鉴权配置文件
+
+本部分将会生成 [Kubernetes 配置文件](https://kubernetes.io/docs/concepts/configuration/organize-cluster-access-kubeconfig/)，也就是 `kubeconfig` 文件，用于 Kubernetes 客户端定位和与 Kubernetes API Server 鉴权。
+
+### 客户端鉴权配置
+
+本部分将会为`kube-proxy`，`kube-controller-manager`，`kube-scheduler` ， `kubelet` 和 `admin` 用户 生成 kubeconfig 配置文件。
+
+#### Kubernetes 公开 IP 地址
+
+每一个 kubeconfig 都需要一个 Kubernetes API Server 地址。为了支持高可用，我们在 Kubernetes API Server 前面创建了一个外部的负载均衡器。
+
+获取 `kubernetes-the-hard-way` 的静态 IP 地址
+
+```bash
+KUBERNETES_PUBLIC_ADDRESS=$(gcloud compute addresses describe kubernetes-the-hard-way \
+  --region $(gcloud config get-value compute/region) \
+  --format 'value(address)')
+```
+
+#### kubelet 配置文件
+
+当为 Kubelet 生成 kubeconfig 文件时，我们需要匹配 Kubelet 节点名称的客户端证书。这确保了 kubelet 能够使用 Kubernetes 的 [Node Authorizer](https://kubernetes.io/docs/admin/authorization/node/) 完成鉴权。
+
+> 下面的命令必须在生成 SSL 证书的目录执行。
+
+为每一个工作节点生成 kubeconfig 文件:
+
+```bash
+for instance in worker-0 worker-1 worker-2; do
+  kubectl config set-cluster kubernetes-the-hard-way \
+    --certificate-authority=ca.pem \
+    --embed-certs=true \
+    --server=https://${KUBERNETES_PUBLIC_ADDRESS}:6443 \
+    --kubeconfig=${instance}.kubeconfig
+
+  kubectl config set-credentials system:node:${instance} \
+    --client-certificate=${instance}.pem \
+    --client-key=${instance}-key.pem \
+    --embed-certs=true \
+    --kubeconfig=${instance}.kubeconfig
+
+  kubectl config set-context default \
+    --cluster=kubernetes-the-hard-way \
+    --user=system:node:${instance} \
+    --kubeconfig=${instance}.kubeconfig
+
+  kubectl config use-context default --kubeconfig=${instance}.kubeconfig
+done
+```
+
+输出
+
+```bash
+worker-0.kubeconfig
+worker-1.kubeconfig
+worker-2.kubeconfig
+```
+
+#### kube-proxy 配置文件
+
+为 `kube-proxy` 生成配置文件
+
+```bash
+kubectl config set-cluster kubernetes-the-hard-way \
+  --certificate-authority=ca.pem \
+  --embed-certs=true \
+  --server=https://${KUBERNETES_PUBLIC_ADDRESS}:6443 \
+  --kubeconfig=kube-proxy.kubeconfig
+
+kubectl config set-credentials system:kube-proxy \
+  --client-certificate=kube-proxy.pem \
+  --client-key=kube-proxy-key.pem \
+  --embed-certs=true \
+  --kubeconfig=kube-proxy.kubeconfig
+
+kubectl config set-context default \
+  --cluster=kubernetes-the-hard-way \
+  --user=system:kube-proxy \
+  --kubeconfig=kube-proxy.kubeconfig
+
+kubectl config use-context default --kubeconfig=kube-proxy.kubeconfig
+```
+
+输出
+
+```bash
+kube-proxy.kubeconfig
+```
+
+#### kube-controller-manager 配置文件
+
+为 `kube-controller-manager`生成配置文件
+
+```bash
+kubectl config set-cluster kubernetes-the-hard-way \
+  --certificate-authority=ca.pem \
+  --embed-certs=true \
+  --server=https://127.0.0.1:6443 \
+  --kubeconfig=kube-controller-manager.kubeconfig
+
+kubectl config set-credentials system:kube-controller-manager \
+  --client-certificate=kube-controller-manager.pem \
+  --client-key=kube-controller-manager-key.pem \
+  --embed-certs=true \
+  --kubeconfig=kube-controller-manager.kubeconfig
+
+kubectl config set-context default \
+  --cluster=kubernetes-the-hard-way \
+  --user=system:kube-controller-manager \
+  --kubeconfig=kube-controller-manager.kubeconfig
+
+kubectl config use-context default --kubeconfig=kube-controller-manager.kubeconfig
+```
+
+输出
+
+```bash
+kube-controller-manager.kubeconfig
+```
+
+#### kube-scheduler 配置文件
+
+```bash
+kubectl config set-cluster kubernetes-the-hard-way \
+  --certificate-authority=ca.pem \
+  --embed-certs=true \
+  --server=https://127.0.0.1:6443 \
+  --kubeconfig=kube-scheduler.kubeconfig
+
+kubectl config set-credentials system:kube-scheduler \
+  --client-certificate=kube-scheduler.pem \
+  --client-key=kube-scheduler-key.pem \
+  --embed-certs=true \
+  --kubeconfig=kube-scheduler.kubeconfig
+
+kubectl config set-context default \
+  --cluster=kubernetes-the-hard-way \
+  --user=system:kube-scheduler \
+  --kubeconfig=kube-scheduler.kubeconfig
+
+kubectl config use-context default --kubeconfig=kube-scheduler.kubeconfig
+```
+
+输出
+
+```bash
+kube-scheduler.kubeconfig
+```
+
+#### 管理员用户配置文件
+
+```bash
+kubectl config set-cluster kubernetes-the-hard-way \
+  --certificate-authority=ca.pem \
+  --embed-certs=true \
+  --server=https://127.0.0.1:6443 \
+  --kubeconfig=admin.kubeconfig
+
+kubectl config set-credentials admin \
+  --client-certificate=admin.pem \
+  --client-key=admin-key.pem \
+  --embed-certs=true \
+  --kubeconfig=admin.kubeconfig
+
+kubectl config set-context default \
+  --cluster=kubernetes-the-hard-way \
+  --user=admin \
+  --kubeconfig=admin.kubeconfig
+
+kubectl config use-context default --kubeconfig=admin.kubeconfig
+```
+
+输出
+
+```bash
+admin.kubeconfig
+```
+
+### 分发配置文件
+
+拷贝对应的 `kubelet` 和 `kube-proxy` 配置文件到每个工作节点
+
+```bash
+for instance in worker-0 worker-1 worker-2; do
+  gcloud compute scp ${instance}.kubeconfig kube-proxy.kubeconfig ${instance}:~/
+done
+```
+
+拷贝对应的 `kube-controller-manager` 和 `kube-scheduler` 配置文件到控制节点
+
+```bash
+for instance in controller-0 controller-1 controller-2; do
+  gcloud compute scp admin.kubeconfig kube-controller-manager.kubeconfig kube-scheduler.kubeconfig ${instance}:~/
+done
+```
+
+## 生成数据加密配置和秘钥
+
+Kubernetes 促成怒了包含集群状态、应用配置和秘钥等数据。Kubernetes 支持集群数据加密。
+
+在本部分中我们将会生成一个用于 Kubernetes 加密 secrets 的 Key 和加密配置文件。
+
+### 加密秘钥
+
+生成加密秘钥
+
+```bash
+ENCRYPTION_KEY=$(head -c 32 /dev/urandom | base64)
+```
+
+### 加密配置文件
+
+生成 `encryption-config.yaml` 加密配置文件
+
+```bash
+cat > encryption-config.yaml <<EOF
+kind: EncryptionConfig
+apiVersion: v1
+resources:
+  - resources:
+      - secrets
+    providers:
+      - aescbc:
+          keys:
+            - name: key1
+              secret: ${ENCRYPTION_KEY}
+      - identity: {}
+EOF
+```
+
+拷贝 `encryption-config.yaml` 配置文件到每个控制节点
+
+```bash
+for instance in controller-0 controller-1 controller-2; do
+  gcloud compute scp encryption-config.yaml ${instance}:~/
+done
+```
+
+## 创建 etcd 集群
+
+Kubernetes 的组件都是无状态的，集群的状态存储在 etcd 中。在本部分我们将会创建一个三节点的 etcd 集群，然后为它配置高可用和远程访问安全。
+
+### 前提条件
+
+本文中的命令必须在每一个控制节点（`controller-0`、`controller-1`、`controller-2`）执行，请使用 `gcloud` 命令登录控制实例。例如
+
+```bash
+gcloud compute ssh controller-0
+```
+
+### 引导一个 etcd 集群
+
+#### 下载和安装 etcd 可执行文件
+
+从 [etcd](https://github.com/etcd-io/etcd) 的 Github 项目下载官方的 etcd 可执行文件
+
+```bash
+wget -q --show-progress --https-only --timestamping \
+  "https://github.com/etcd-io/etcd/releases/download/v3.4.15/etcd-v3.4.15-linux-amd64.tar.gz"
+```
+
+解压并安装 `etcd` 服务器和 `etcdctl` 命令行工具
+
+```bash
+tar -xvf etcd-v3.4.15-linux-amd64.tar.gz
+sudo mv etcd-v3.4.15-linux-amd64/etcd* /usr/local/bin/
+```
+
+#### 配置 etcd 服务器
+
+```bash
+sudo mkdir -p /etc/etcd /var/lib/etcd
+sudo chmod 700 /var/lib/etcd
+sudo cp ca.pem kubernetes-key.pem kubernetes.pem /etc/etcd/
+```
+
+实例的内部 IP 地址将被用来为客户端提供服务和与其它 etcd 成员通信。从当前计算实例获取当前实例的 IP 地址
+
+```bash
+INTERNAL_IP=$(curl -s -H "Metadata-Flavor: Google" \
+  http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/ip)
+```
+
+在一个 etcd 集群中，每一个 etcd 成员都必须有一个唯一的名字，设置 etcd 成员的名字为当前计算实例的主机名
+
+```bash
+ETCD_NAME=$(hostname -s)
+```
+
+创建 `etcd.service` 的 systemd 文件
+
+```bash
+cat <<EOF | sudo tee /etc/systemd/system/etcd.service
+[Unit]
+Description=etcd
+Documentation=https://github.com/coreos
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/etcd \\
+  --name ${ETCD_NAME} \\
+  --cert-file=/etc/etcd/kubernetes.pem \\
+  --key-file=/etc/etcd/kubernetes-key.pem \\
+  --peer-cert-file=/etc/etcd/kubernetes.pem \\
+  --peer-key-file=/etc/etcd/kubernetes-key.pem \\
+  --trusted-ca-file=/etc/etcd/ca.pem \\
+  --peer-trusted-ca-file=/etc/etcd/ca.pem \\
+  --peer-client-cert-auth \\
+  --client-cert-auth \\
+  --initial-advertise-peer-urls https://${INTERNAL_IP}:2380 \\
+  --listen-peer-urls https://${INTERNAL_IP}:2380 \\
+  --listen-client-urls https://${INTERNAL_IP}:2379,https://127.0.0.1:2379 \\
+  --advertise-client-urls https://${INTERNAL_IP}:2379 \\
+  --initial-cluster-token etcd-cluster-0 \\
+  --initial-cluster controller-0=https://10.240.0.10:2380,controller-1=https://10.240.0.11:2380,controller-2=https://10.240.0.12:2380 \\
+  --initial-cluster-state new \\
+  --data-dir=/var/lib/etcd
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+#### 启动 etcd 服务器
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable etcd
+sudo systemctl start etcd
+```
+
+> 请注意，需要在每一个控制面计算实例执行上面的命令。
+
+### 验证
+
+列出 etcd 集群成员
+
+```bash
+sudo ETCDCTL_API=3 etcdctl member list \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/etcd/ca.pem \
+  --cert=/etc/etcd/kubernetes.pem \
+  --key=/etc/etcd/kubernetes-key.pem
+```
+
+输出
+
+```bash
+3a57933972cb5131, started, controller-2, https://10.240.0.12:2380, https://10.240.0.12:2379, false
+f98dc20bce6225a0, started, controller-0, https://10.240.0.10:2380, https://10.240.0.10:2379, false
+ffed16798470cab5, started, controller-1, https://10.240.0.11:2380, https://10.240.0.11:2379, false
+```
+
+## 创建 Kubernetes 控制面
+
+在本部分我们将会创建三个控制节点的 Kubernetes 集群控制面，并且为它们配置高可用。我们也会创建一个外部的负载均衡器用于暴露 Kubernetes API Server 给远程客户端。下面的组件会被安装在每一个节点：`Kubernetes API Server`，`Scheduler`，`Controller Manager`。
+
+### 准备 Kubernetes 控制面
+
+创建 Kubernetes 配置目录
+
+```bash
+sudo mkdir -p /etc/kubernetes/config
+```
+
+#### 下载并安装 Kubernetes Controller 可执行文件
+
+```bash
+wget -q --show-progress --https-only --timestamping \
+  "https://storage.googleapis.com/kubernetes-release/release/v1.21.0/bin/linux/amd64/kube-apiserver" \
+  "https://storage.googleapis.com/kubernetes-release/release/v1.21.0/bin/linux/amd64/kube-controller-manager" \
+  "https://storage.googleapis.com/kubernetes-release/release/v1.21.0/bin/linux/amd64/kube-scheduler" \
+  "https://storage.googleapis.com/kubernetes-release/release/v1.21.0/bin/linux/amd64/kubectl"
+```
+
+安装 Kubernetes 可执行文件
+
+```bash
+chmod +x kube-apiserver kube-controller-manager kube-scheduler kubectl
+sudo mv kube-apiserver kube-controller-manager kube-scheduler kubectl /usr/local/bin/
+```
+
+#### 配置 Kubernetes API Server
+
+```bash
+sudo mkdir -p /var/lib/kubernetes/
+
+sudo mv ca.pem ca-key.pem kubernetes-key.pem kubernetes.pem \
+service-account-key.pem service-account.pem \
+encryption-config.yaml /var/lib/kubernetes/
+```
+
+实例的内部 IP 地址将被用来向集群成员通告 API Server。从当前计算实例获取内部 IP 地址：
+
+```bash
+INTERNAL_IP=$(curl -s -H "Metadata-Flavor: Google" \
+  http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/ip)
+REGION=$(curl -s -H "Metadata-Flavor: Google" \
+  http://metadata.google.internal/computeMetadata/v1/project/attributes/google-compute-default-region)
+KUBERNETES_PUBLIC_ADDRESS=$(gcloud compute addresses describe kubernetes-the-hard-way \
+  --region $REGION \
+  --format 'value(address)')
+```
+
+创建 `kube-apiserver.service` 启动文件
+
+```bash
+cat <<EOF | sudo tee /etc/systemd/system/kube-apiserver.service
+[Unit]
+Description=Kubernetes API Server
+Documentation=https://github.com/kubernetes/kubernetes
+
+[Service]
+ExecStart=/usr/local/bin/kube-apiserver \\
+  --advertise-address=${INTERNAL_IP} \\
+  --allow-privileged=true \\
+  --apiserver-count=3 \\
+  --audit-log-maxage=30 \\
+  --audit-log-maxbackup=3 \\
+  --audit-log-maxsize=100 \\
+  --audit-log-path=/var/log/audit.log \\
+  --authorization-mode=Node,RBAC \\
+  --bind-address=0.0.0.0 \\
+  --client-ca-file=/var/lib/kubernetes/ca.pem \\
+  --enable-admission-plugins=NamespaceLifecycle,NodeRestriction,LimitRanger,ServiceAccount,DefaultStorageClass,ResourceQuota \\
+  --etcd-cafile=/var/lib/kubernetes/ca.pem \\
+  --etcd-certfile=/var/lib/kubernetes/kubernetes.pem \\
+  --etcd-keyfile=/var/lib/kubernetes/kubernetes-key.pem \\
+  --etcd-servers=https://10.240.0.10:2379,https://10.240.0.11:2379,https://10.240.0.12:2379 \\
+  --event-ttl=1h \\
+  --encryption-provider-config=/var/lib/kubernetes/encryption-config.yaml \\
+  --kubelet-certificate-authority=/var/lib/kubernetes/ca.pem \\
+  --kubelet-client-certificate=/var/lib/kubernetes/kubernetes.pem \\
+  --kubelet-client-key=/var/lib/kubernetes/kubernetes-key.pem \\
+  --runtime-config='api/all=true' \\
+  --service-account-key-file=/var/lib/kubernetes/service-account.pem \\
+  --service-account-signing-key-file=/var/lib/kubernetes/service-account-key.pem \\
+  --service-account-issuer=https://${KUBERNETES_PUBLIC_ADDRESS}:6443 \\
+  --service-cluster-ip-range=10.32.0.0/24 \\
+  --service-node-port-range=30000-32767 \\
+  --tls-cert-file=/var/lib/kubernetes/kubernetes.pem \\
+  --tls-private-key-file=/var/lib/kubernetes/kubernetes-key.pem \\
+  --v=2
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+#### 配置 Kubernetes Controller Manager
+
+移动 `kube-controller-manager` 配置文件到指定位置
+
+```bash
+sudo mv kube-controller-manager.kubeconfig /var/lib/kubernetes/
+```
+
+创建 `kube-controller-manager.service` 启动文件
+
+```bash
+cat <<EOF | sudo tee /etc/systemd/system/kube-controller-manager.service
+[Unit]
+Description=Kubernetes Controller Manager
+Documentation=https://github.com/kubernetes/kubernetes
+
+[Service]
+ExecStart=/usr/local/bin/kube-controller-manager \\
+  --bind-address=0.0.0.0 \\
+  --cluster-cidr=10.200.0.0/16 \\
+  --cluster-name=kubernetes \\
+  --cluster-signing-cert-file=/var/lib/kubernetes/ca.pem \\
+  --cluster-signing-key-file=/var/lib/kubernetes/ca-key.pem \\
+  --kubeconfig=/var/lib/kubernetes/kube-controller-manager.kubeconfig \\
+  --leader-elect=true \\
+  --root-ca-file=/var/lib/kubernetes/ca.pem \\
+  --service-account-private-key-file=/var/lib/kubernetes/service-account-key.pem \\
+  --service-cluster-ip-range=10.32.0.0/24 \\
+  --use-service-account-credentials=true \\
+  --v=2
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+#### 配置 Kubernetes Scheduler
+
+```bash
+sudo mv kube-scheduler.kubeconfig /var/lib/kubernetes/
+
+cat <<EOF | sudo tee /etc/kubernetes/config/kube-scheduler.yaml
+apiVersion: kubescheduler.config.k8s.io/v1beta1
+kind: KubeSchedulerConfiguration
+clientConnection:
+  kubeconfig: "/var/lib/kubernetes/kube-scheduler.kubeconfig"
+leaderElection:
+  leaderElect: true
+EOF
+
+cat <<EOF | sudo tee /etc/systemd/system/kube-scheduler.service
+[Unit]
+Description=Kubernetes Scheduler
+Documentation=https://github.com/kubernetes/kubernetes
+
+[Service]
+ExecStart=/usr/local/bin/kube-scheduler \\
+  --config=/etc/kubernetes/config/kube-scheduler.yaml \\
+  --v=2
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+#### 启动控制器服务
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable kube-apiserver kube-controller-manager kube-scheduler
+sudo systemctl start kube-apiserver kube-controller-manager kube-scheduler
+```
+
+>Kubernetes API Server 完成初始化差不多需要耗时 10s。
+
+#### 启用 HTTP 健康检查
+
+Google Network Load Balancer 将用于在三个 API 服务器之间分配流量，并允许每个 API 服务器终止 TLS 连接并验证客户端证书。网络负载均衡器只支持 HTTP 健康检查，这意味着 API 服务器暴露的 HTTPS 端点无法使用。Nginx Web 服务器可以用于代理 HTTP 健康检查。在这部分，我们将会安装并配置一个 Nginx 服务器来接收来自 80 端口的 HTTP 健康检查，并且代理连接给 API 服务器的 `https://127.0.0.1:6443/healthz` 端点。
+
+> API 服务器的 `/healthz` 端点默认情况下不需要鉴权。
+
+安装一个用于处理 HTTP 健康检查的 web 服务器：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y nginx
+
+cat > kubernetes.default.svc.cluster.local <<EOF
+server {
+  listen      80;
+  server_name kubernetes.default.svc.cluster.local;
+
+  location /healthz {
+     proxy_pass                    https://127.0.0.1:6443/healthz;
+     proxy_ssl_trusted_certificate /var/lib/kubernetes/ca.pem;
+  }
+}
+EOF
+
+sudo mv kubernetes.default.svc.cluster.local \
+    /etc/nginx/sites-available/kubernetes.default.svc.cluster.local
+sudo ln -s /etc/nginx/sites-available/kubernetes.default.svc.cluster.local /etc/nginx/sites-enabled/
+
+sudo systemctl restart nginx
+sudo systemctl enable nginx
+```
+
+#### 验证
+
+```bash
+$ kubectl cluster-info --kubeconfig admin.kubeconfig
+Kubernetes control plane is running at https://127.0.0.1:6443
+```
+
+测试 nginx HTTP 健康检查代理
+
+```bash
+$ curl -H "Host: kubernetes.default.svc.cluster.local" -i http://127.0.0.1/healthz
+HTTP/1.1 200 OK
+Server: nginx/1.18.0 (Ubuntu)
+Date: Sun, 02 May 2021 04:19:29 GMT
+Content-Type: text/plain; charset=utf-8
+Content-Length: 2
+Connection: keep-alive
+Cache-Control: no-cache, private
+X-Content-Type-Options: nosniff
+X-Kubernetes-Pf-Flowschema-Uid: c43f32eb-e038-457f-9474-571d43e5c325
+X-Kubernetes-Pf-Prioritylevel-Uid: 8ba5908f-5569-4330-80fd-c643e7512366
+
+ok
+```
+
+### Kubelet 的 RBAC 鉴权
+
+在本部分我们将配置RBAC权限来允许 Kubernetes API Server 访问每个工作节点上的 Kubelet API。对 POD 的指标检索、日志和执行命令都需要访问 Kubelet API。
+
+> 本文设置 Kubelet 的 `--authorization-mode` 参数为 `Webhook`。Webhook 模式使用 [SubjectAccessReview](https://kubernetes.io/docs/admin/authorization/#checking-api-access) API 来进行鉴权。
+
+本部分的命令将会影响整个集群，且只需要在其中一个控制器节点执行一次。
+
+```bash
+gcloud compute ssh controller-0
+```
+
+创建名为 `system:kube-apiserver-to-kubelet` 的 [ClusterRole](https://kubernetes.io/docs/admin/authorization/rbac/#role-and-clusterrole)，赋予它访问 Kubelet API 和执行与 POD 相关的常见任务的权限:
+
+```bash
+cat <<EOF | kubectl apply --kubeconfig admin.kubeconfig -f -
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  annotations:
+    rbac.authorization.kubernetes.io/autoupdate: "true"
+  labels:
+    kubernetes.io/bootstrapping: rbac-defaults
+  name: system:kube-apiserver-to-kubelet
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - nodes/proxy
+      - nodes/stats
+      - nodes/log
+      - nodes/spec
+      - nodes/metrics
+    verbs:
+      - "*"
+EOF
+```
+
+ Kubernetes API Server 使用 `--kubelet-client-certificate` 参数指定的客户端证书，以 `kubernetes` 用户的身份向 Kubelet 进行身份认证。
+
+绑定 `system:kube-apiserver-to-kubelet` ClusterRole 与 `kubernetes` 用户：
+
+```bash
+cat <<EOF | kubectl apply --kubeconfig admin.kubeconfig -f -
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: system:kube-apiserver
+  namespace: ""
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:kube-apiserver-to-kubelet
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: kubernetes
+EOF
+```
+
+### Kubernetes 前端负载均衡器
+
+本部分我们将会在 Kubernetes API Server 前面准备一个外部的负载均衡器。`kubernetes-the-hard-way` 的静态 IP 将与这个负载均衡器绑定。
+
+> 本文中创建的计算实例没有完成该操作的权限。请在我们创建计算实例的机器上执行下面的命令。
+
+#### 准备一个网络负载均衡器
+
+创建外部负载均衡器资源：
+
+```bash
+KUBERNETES_PUBLIC_ADDRESS=$(gcloud compute addresses describe kubernetes-the-hard-way \
+  --region $(gcloud config get-value compute/region) \
+  --format 'value(address)')
+
+gcloud compute http-health-checks create kubernetes \
+  --description "Kubernetes Health Check" \
+  --host "kubernetes.default.svc.cluster.local" \
+  --request-path "/healthz"
+
+gcloud compute firewall-rules create kubernetes-the-hard-way-allow-health-check \
+  --network kubernetes-the-hard-way \
+  --source-ranges 209.85.152.0/22,209.85.204.0/22,35.191.0.0/16 \
+  --allow tcp
+
+gcloud compute target-pools create kubernetes-target-pool \
+  --http-health-check kubernetes
+
+gcloud compute target-pools add-instances kubernetes-target-pool \
+ --instances controller-0,controller-1,controller-2
+
+gcloud compute forwarding-rules create kubernetes-forwarding-rule \
+  --address ${KUBERNETES_PUBLIC_ADDRESS} \
+  --ports 6443 \
+  --region $(gcloud config get-value compute/region) \
+  --target-pool kubernetes-target-pool
+```
+
+#### 验证
+
+```bash
+$ KUBERNETES_PUBLIC_ADDRESS=$(gcloud compute addresses describe kubernetes-the-hard-way \
+  --region $(gcloud config get-value compute/region) \
+  --format 'value(address)')
+$ curl --cacert ca.pem https://${KUBERNETES_PUBLIC_ADDRESS}:6443/version
+{
+  "major": "1",
+  "minor": "21",
+  "gitVersion": "v1.21.0",
+  "gitCommit": "cb303e613a121a29364f75cc67d3d580833a7479",
+  "gitTreeState": "clean",
+  "buildDate": "2021-04-08T16:25:06Z",
+  "goVersion": "go1.16.1",
+  "compiler": "gc",
+  "platform": "linux/amd64"
+}
+```
+
+## 创建 Kubernetes 工作节点
+
+本部分我们将创建3个 Kubernetes 工作节点。在每个节点上，我们将会安装以下组件：[runc](https://github.com/opencontainers/runc), [container networking plugins](https://github.com/containernetworking/cni), [containerd](https://github.com/containerd/containerd), [kubelet](https://kubernetes.io/docs/admin/kubelet), and [kube-proxy](https://kubernetes.io/docs/concepts/cluster-administration/proxies)。
+
+### 准备 Kubernetes 工作节点
+
+安装操作系统依赖
+
+```bash
+sudo apt-get update
+sudo apt-get -y install socat conntrack ipset
+```
+
+> `socat` 可执行文件用于支持 `kubectl port-forward` 命令。
+
+#### 禁用 Swap 
+
+如果 swap 是启用的话，默认情况下 kubelet 将会启动失败。建议禁用掉 swap 来确保 Kubernetes 可以提供合适的资源分配和服务质量。
+
+验证是否 swap 是启用状态：
+
+```bash
+sudo swapon --show
+```
+
+如果输出为空说明 swap 没有启用。如果 swap 是启用的，执行下面的命令来关闭
+
+```bash
+sudo swapoff -a
+```
+
+> 参考所使用的 Linux 发行版文档来确保 swap 在重启后依然是关闭的。
+
+#### 下载和安装
+
+```bash
+wget -q --show-progress --https-only --timestamping \
+  https://github.com/kubernetes-sigs/cri-tools/releases/download/v1.21.0/crictl-v1.21.0-linux-amd64.tar.gz \
+  https://github.com/opencontainers/runc/releases/download/v1.0.0-rc93/runc.amd64 \
+  https://github.com/containernetworking/plugins/releases/download/v0.9.1/cni-plugins-linux-amd64-v0.9.1.tgz \
+  https://github.com/containerd/containerd/releases/download/v1.4.4/containerd-1.4.4-linux-amd64.tar.gz \
+  https://storage.googleapis.com/kubernetes-release/release/v1.21.0/bin/linux/amd64/kubectl \
+  https://storage.googleapis.com/kubernetes-release/release/v1.21.0/bin/linux/amd64/kube-proxy \
+  https://storage.googleapis.com/kubernetes-release/release/v1.21.0/bin/linux/amd64/kubelet
+```
+
+创建安装目录
+
+```bash
+sudo mkdir -p \
+  /etc/cni/net.d \
+  /opt/cni/bin \
+  /var/lib/kubelet \
+  /var/lib/kube-proxy \
+  /var/lib/kubernetes \
+  /var/run/kubernetes
+```
+
+安装可执行文件
+
+```bash
+mkdir containerd
+tar -xvf crictl-v1.21.0-linux-amd64.tar.gz
+tar -xvf containerd-1.4.4-linux-amd64.tar.gz -C containerd
+sudo tar -xvf cni-plugins-linux-amd64-v0.9.1.tgz -C /opt/cni/bin/
+sudo mv runc.amd64 runc
+chmod +x crictl kubectl kube-proxy kubelet runc 
+sudo mv crictl kubectl kube-proxy kubelet runc /usr/local/bin/
+sudo mv containerd/bin/* /bin/
+```
+
+#### 配置 CNI 网络
+
+获取当前计算实例的 POD CIDR 范围
+
+```bash
+POD_CIDR=$(curl -s -H "Metadata-Flavor: Google" \
+  http://metadata.google.internal/computeMetadata/v1/instance/attributes/pod-cidr)
+```
+
+创建 `bridge` 网络配置文件
+
+```bash
+cat <<EOF | sudo tee /etc/cni/net.d/10-bridge.conf
+{
+    "cniVersion": "0.4.0",
+    "name": "bridge",
+    "type": "bridge",
+    "bridge": "cnio0",
+    "isGateway": true,
+    "ipMasq": true,
+    "ipam": {
+        "type": "host-local",
+        "ranges": [
+          [{"subnet": "${POD_CIDR}"}]
+        ],
+        "routes": [{"dst": "0.0.0.0/0"}]
+    }
+}
+EOF
+```
+
+创建 `loopback` 网络配置文件
+
+```bash
+cat <<EOF | sudo tee /etc/cni/net.d/99-loopback.conf
+{
+    "cniVersion": "0.4.0",
+    "name": "lo",
+    "type": "loopback"
+}
+EOF
+```
+
+#### 配置 containerd
+
+创建 `containerd` 配置文件
+
+```bash
+sudo mkdir -p /etc/containerd/
+
+cat << EOF | sudo tee /etc/containerd/config.toml
+[plugins]
+  [plugins.cri.containerd]
+    snapshotter = "overlayfs"
+    [plugins.cri.containerd.default_runtime]
+      runtime_type = "io.containerd.runtime.v1.linux"
+      runtime_engine = "/usr/local/bin/runc"
+      runtime_root = ""
+EOF
+```
+
+创建 `containerd.service` 启动文件
+
+```bash
+cat <<EOF | sudo tee /etc/systemd/system/containerd.service
+[Unit]
+Description=containerd container runtime
+Documentation=https://containerd.io
+After=network.target
+
+[Service]
+ExecStartPre=/sbin/modprobe overlay
+ExecStart=/bin/containerd
+Restart=always
+RestartSec=5
+Delegate=yes
+KillMode=process
+OOMScoreAdjust=-999
+LimitNOFILE=1048576
+LimitNPROC=infinity
+LimitCORE=infinity
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+#### 配置 Kubelet
+
+```bash
+sudo mv ${HOSTNAME}-key.pem ${HOSTNAME}.pem /var/lib/kubelet/
+sudo mv ${HOSTNAME}.kubeconfig /var/lib/kubelet/kubeconfig
+sudo mv ca.pem /var/lib/kubernetes/
+```
+
+创建 `kubelet-config.yaml` 配置文件
+
+```bash
+cat <<EOF | sudo tee /var/lib/kubelet/kubelet-config.yaml
+kind: KubeletConfiguration
+apiVersion: kubelet.config.k8s.io/v1beta1
+authentication:
+  anonymous:
+    enabled: false
+  webhook:
+    enabled: true
+  x509:
+    clientCAFile: "/var/lib/kubernetes/ca.pem"
+authorization:
+  mode: Webhook
+clusterDomain: "cluster.local"
+clusterDNS:
+  - "10.32.0.10"
+podCIDR: "${POD_CIDR}"
+resolvConf: "/run/systemd/resolve/resolv.conf"
+runtimeRequestTimeout: "15m"
+tlsCertFile: "/var/lib/kubelet/${HOSTNAME}.pem"
+tlsPrivateKeyFile: "/var/lib/kubelet/${HOSTNAME}-key.pem"
+EOF
+```
+
+> 配置文件 `resolvConf` 用于在运行 `systemd-resolved` 的系统上使用 CoreDNS 进行服务发现时避免循环。
+
+创建 `kubelet.service` 启动文件
+
+```bash
+cat <<EOF | sudo tee /etc/systemd/system/kubelet.service
+[Unit]
+Description=Kubernetes Kubelet
+Documentation=https://github.com/kubernetes/kubernetes
+After=containerd.service
+Requires=containerd.service
+
+[Service]
+ExecStart=/usr/local/bin/kubelet \\
+  --config=/var/lib/kubelet/kubelet-config.yaml \\
+  --container-runtime=remote \\
+  --container-runtime-endpoint=unix:///var/run/containerd/containerd.sock \\
+  --image-pull-progress-deadline=2m \\
+  --kubeconfig=/var/lib/kubelet/kubeconfig \\
+  --network-plugin=cni \\
+  --register-node=true \\
+  --v=2
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+#### 配置 Kubernetes 代理
+
+```bash
+sudo mv kube-proxy.kubeconfig /var/lib/kube-proxy/kubeconfig
+
+cat <<EOF | sudo tee /var/lib/kube-proxy/kube-proxy-config.yaml
+kind: KubeProxyConfiguration
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+clientConnection:
+  kubeconfig: "/var/lib/kube-proxy/kubeconfig"
+mode: "iptables"
+clusterCIDR: "10.200.0.0/16"
+EOF
+```
+
+创建 `kube-proxy.service` 启动文件
+
+```bash
+cat <<EOF | sudo tee /etc/systemd/system/kube-proxy.service
+[Unit]
+Description=Kubernetes Kube Proxy
+Documentation=https://github.com/kubernetes/kubernetes
+
+[Service]
+ExecStart=/usr/local/bin/kube-proxy \\
+  --config=/var/lib/kube-proxy/kube-proxy-config.yaml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+#### 启动工作节点服务
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable containerd kubelet kube-proxy
+sudo systemctl start containerd kubelet kube-proxy
+```
+
+### 验证
+
+列出 Kubernetes 节点：
+
+```bash
+$ gcloud compute ssh controller-0 \
+  --command "kubectl get nodes --kubeconfig admin.kubeconfig"
+NAME       STATUS   ROLES    AGE   VERSION
+worker-0   Ready    <none>   22s   v1.21.0
+worker-1   Ready    <none>   22s   v1.21.0
+worker-2   Ready    <none>   22s   v1.21.0
+```
+
+## 配置 kubectl 远程访问
+
+本部分将会为 `kubectl` 命令行工具生成一个基于 `admin` 用户凭据的 kubeconfig 配置文件。
+
+### Kubernetes 管理员配置文件
+
+每一个 kubeconfig 都需要到 Kubernetes API 服务器的连接。为了支持高可用，我们在 Kubernetes API Server 前添加了一个负载均衡器。
+
+为 `admin` 用户生成鉴权配置文件：
+
+```bash
+KUBERNETES_PUBLIC_ADDRESS=$(gcloud compute addresses describe kubernetes-the-hard-way \
+  --region $(gcloud config get-value compute/region) \
+  --format 'value(address)')
+
+kubectl config set-cluster kubernetes-the-hard-way \
+  --certificate-authority=ca.pem \
+  --embed-certs=true \
+  --server=https://${KUBERNETES_PUBLIC_ADDRESS}:6443
+
+kubectl config set-credentials admin \
+  --client-certificate=admin.pem \
+  --client-key=admin-key.pem
+
+kubectl config set-context kubernetes-the-hard-way \
+  --cluster=kubernetes-the-hard-way \
+  --user=admin
+
+kubectl config use-context kubernetes-the-hard-way
+```
+
+### 验证
+
+```bash
+$ kubectl version
+Client Version: version.Info{Major:"1", Minor:"21", GitVersion:"v1.21.0", GitCommit:"cb303e613a121a29364f75cc67d3d580833a7479", GitTreeState:"clean", BuildDate:"2021-04-08T16:31:21Z", GoVersion:"go1.16.1", Compiler:"gc", Platform:"linux/amd64"}
+Server Version: version.Info{Major:"1", Minor:"21", GitVersion:"v1.21.0", GitCommit:"cb303e613a121a29364f75cc67d3d580833a7479", GitTreeState:"clean", BuildDate:"2021-04-08T16:25:06Z", GoVersion:"go1.16.1", Compiler:"gc", Platform:"linux/amd64"}
+```
+
+列出远程 Kubernetes 集群节点列表
+
+```bash
+$ kubectl get nodes
+NAME       STATUS   ROLES    AGE     VERSION
+worker-0   Ready    <none>   2m35s   v1.21.0
+worker-1   Ready    <none>   2m35s   v1.21.0
+worker-2   Ready    <none>   2m35s   v1.21.0
+```
+
+## 准备容器网络路由
+
+调度到节点的 Pod 会从节点的 Pod CIDR 范围内获取 IP 地址。这时候由于缺少网络路由， Pod 无法与运行在不同的节点上的其它 Pod 进行通信。
+
+本部分我们将会为每一个工作节点创建一个路由规则，然后映射 Pod 的 CIDR 地址范围到节点的内部 IP 地址。
+
+> 其它 Kubernetes 网络模型 [参考这里](https://kubernetes.io/docs/concepts/cluster-administration/networking/#how-to-achieve-this)。
+
+### 路由表
+
+在本部分我们将会收集在 `kubernetes-the-hard-way` VPC 网络中创建路由规则所需要的信息。
+
+```bash
+for instance in worker-0 worker-1 worker-2; do
+  gcloud compute instances describe ${instance} \
+    --format 'value[separator=" "](networkInterfaces[0].networkIP,metadata.items[0].value)'
+done
+```
+
+输出
+
+```bash
+10.240.0.20 10.200.0.0/24
+10.240.0.21 10.200.1.0/24
+10.240.0.22 10.200.2.0/24
+```
+
+#### 路由
+
+在每一个工作节点上创建网络路由规则
+
+```bash
+for i in 0 1 2; do
+  gcloud compute routes create kubernetes-route-10-200-${i}-0-24 \
+    --network kubernetes-the-hard-way \
+    --next-hop-address 10.240.0.2${i} \
+    --destination-range 10.200.${i}.0/24
+done
+```
+
+列出在 `kubernetes-the-hard-way` VPC 网络中的路由
+
+```bash
+$ gcloud compute routes list --filter "network: kubernetes-the-hard-way"
+NAME                            NETWORK                  DEST_RANGE     NEXT_HOP                  PRIORITY
+default-route-1606ba68df692422  kubernetes-the-hard-way  10.240.0.0/24  kubernetes-the-hard-way   0
+default-route-615e3652a8b74e4d  kubernetes-the-hard-way  0.0.0.0/0      default-internet-gateway  1000
+kubernetes-route-10-200-0-0-24  kubernetes-the-hard-way  10.200.0.0/24  10.240.0.20               1000
+kubernetes-route-10-200-1-0-24  kubernetes-the-hard-way  10.200.1.0/24  10.240.0.21               1000
+kubernetes-route-10-200-2-0-24  kubernetes-the-hard-way  10.200.2.0/24  10.240.0.22               1000
+```
+
+## 部署 DNS 集群插件
+
+在本部分我们将会部署 DNS 插件，我们使用 CoreDNS 为 Kubernetes 集群内运行的应用提供基于 DNS 的服务发现。
+
+### DNS 集群插件
+
+部署 `coredns` 集群插件
+
+```bash
+$ kubectl apply -f https://storage.googleapis.com/kubernetes-the-hard-way/coredns-1.8.yaml
+serviceaccount/coredns created
+clusterrole.rbac.authorization.k8s.io/system:coredns created
+clusterrolebinding.rbac.authorization.k8s.io/system:coredns created
+configmap/coredns created
+deployment.apps/coredns created
+service/kube-dns created
+```
+
+列出 `kube-dns` Deployment 创建的 Pods:
+
+```bash
+$ kubectl get pods -l k8s-app=kube-dns -n kube-system
+NAME                       READY   STATUS    RESTARTS   AGE
+coredns-8494f9c688-hh7r2   1/1     Running   0          10s
+coredns-8494f9c688-zqrj2   1/1     Running   0          10s
+```
+
+### 验证
+
+创建一个 `busybox` 的 Deployment：
+
+```bash
+kubectl run busybox --image=busybox:1.28 --command -- sleep 3600
+```
+
+列出 `busybox` 创建的 Pods：
+
+```bash
+$ kubectl get pods -l run=busybox
+NAME      READY   STATUS    RESTARTS   AGE
+busybox   1/1     Running   0          3s
+```
+
+检索 `busybox` 的 pod 完整名称，执行 DNS 查询
+
+```bash
+$ POD_NAME=$(kubectl get pods -l run=busybox -o jsonpath="{.items[0].metadata.name}")
+$ kubectl exec -ti $POD_NAME -- nslookup kubernetes
+Server:    10.32.0.10
+Address 1: 10.32.0.10 kube-dns.kube-system.svc.cluster.local
+
+Name:      kubernetes
+Address 1: 10.32.0.1 kubernetes.default.svc.cluster.local
+```
+
+## 冒烟测试
+
+在本文中，我们将会完成一系列的任务来确保我们的 Kubernetes 集群是正常的。
+
+### 数据加密
+
+本部分我们将会验证私密数据加密能力。
+
+创建一个通用的 secret：
+
+```bash
+kubectl create secret generic kubernetes-the-hard-way \
+  --from-literal="mykey=mydata"
+```
+
+输出 `kubernetes-the-hard-way` Secret 在 etcd 中存储的十六进制格式
+
+```bash
+gcloud compute ssh controller-0 \
+  --command "sudo ETCDCTL_API=3 etcdctl get \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/etcd/ca.pem \
+  --cert=/etc/etcd/kubernetes.pem \
+  --key=/etc/etcd/kubernetes-key.pem\
+  /registry/secrets/default/kubernetes-the-hard-way | hexdump -C"
+```
+
+输出
+
+```bash
+00000000  2f 72 65 67 69 73 74 72  79 2f 73 65 63 72 65 74  |/registry/secret|
+00000010  73 2f 64 65 66 61 75 6c  74 2f 6b 75 62 65 72 6e  |s/default/kubern|
+00000020  65 74 65 73 2d 74 68 65  2d 68 61 72 64 2d 77 61  |etes-the-hard-wa|
+00000030  79 0a 6b 38 73 3a 65 6e  63 3a 61 65 73 63 62 63  |y.k8s:enc:aescbc|
+00000040  3a 76 31 3a 6b 65 79 31  3a 97 d1 2c cd 89 0d 08  |:v1:key1:..,....|
+00000050  29 3c 7d 19 41 cb ea d7  3d 50 45 88 82 a3 1f 11  |)<}.A...=PE.....|
+00000060  26 cb 43 2e c8 cf 73 7d  34 7e b1 7f 9f 71 d2 51  |&.C...s}4~...q.Q|
+00000070  45 05 16 e9 07 d4 62 af  f8 2e 6d 4a cf c8 e8 75  |E.....b...mJ...u|
+00000080  6b 75 1e b7 64 db 7d 7f  fd f3 96 62 e2 a7 ce 22  |ku..d.}....b..."|
+00000090  2b 2a 82 01 c3 f5 83 ae  12 8b d5 1d 2e e6 a9 90  |+*..............|
+000000a0  bd f0 23 6c 0c 55 e2 52  18 78 fe bf 6d 76 ea 98  |..#l.U.R.x..mv..|
+000000b0  fc 2c 17 36 e3 40 87 15  25 13 be d6 04 88 68 5b  |.,.6.@..%.....h[|
+000000c0  a4 16 81 f6 8e 3b 10 46  cb 2c ba 21 35 0c 5b 49  |.....;.F.,.!5.[I|
+000000d0  e5 27 20 4c b3 8e 6b d0  91 c2 28 f1 cc fa 6a 1b  |.' L..k...(...j.|
+000000e0  31 19 74 e7 a5 66 6a 99  1c 84 c7 e0 b0 fc 32 86  |1.t..fj.......2.|
+000000f0  f3 29 5a a4 1c d5 a4 e3  63 26 90 95 1e 27 d0 14  |.)Z.....c&...'..|
+00000100  94 f0 ac 1a cd 0d b9 4b  ae 32 02 a0 f8 b7 3f 0b  |.......K.2....?.|
+00000110  6f ad 1f 4d 15 8a d6 68  95 63 cf 7d 04 9a 52 71  |o..M...h.c.}..Rq|
+00000120  75 ff 87 6b c5 42 e1 72  27 b5 e9 1a fe e8 c0 3f  |u..k.B.r'......?|
+00000130  d9 04 5e eb 5d 43 0d 90  ce fa 04 a8 4a b0 aa 01  |..^.]C......J...|
+00000140  cf 6d 5b 80 70 5b 99 3c  d6 5c c0 dc d1 f5 52 4a  |.m[.p[.<.\....RJ|
+00000150  2c 2d 28 5a 63 57 8e 4f  df 0a                    |,-(ZcW.O..|
+0000015a
+```
+
+etcd 的 key 应该是以 `k8s:enc:aescbc:v1:key1` 为前缀的，这里的 `aescbc` 表明了使用了 `aescbc` 来加密数据。
+
+### Deployments
+
+在这一部分我们将会验证创建和管理 Deployment 的能力。
+
+创建一个 nginx web 服务器的 deployment：
+
+```bash
+kubectl create deployment nginx --image=nginx
+```
+
+列出 `nginx` Deployment 创建的 Pods
+
+```bash
+kubectl get pods -l app=nginx
+```
+
+输出
+
+```bash
+NAME                    READY   STATUS    RESTARTS   AGE
+nginx-f89759699-kpn5m   1/1     Running   0          10s
+```
+
+### 端口转发
+
+这部分我们将会验证使用端口转发远程访问应用的能力
+
+检索 nginx pod 的完整名称
+
+```bash
+POD_NAME=$(kubectl get pods -l app=nginx -o jsonpath="{.items[0].metadata.name}")
+```
+
+转发本机机器的 8080 端口给 nginx  Pod 的 80 端口：
+
+```bash
+$ kubectl port-forward $POD_NAME 8080:80
+Forwarding from 127.0.0.1:8080 -> 80
+Forwarding from [::1]:8080 -> 80
+```
+
+在一个新的控制台中，发起一个 HTTP 请求
+
+```bash
+$ curl --head http://127.0.0.1:8080
+HTTP/1.1 200 OK
+Server: nginx/1.19.10
+Date: Sun, 02 May 2021 05:29:25 GMT
+Content-Type: text/html
+Content-Length: 612
+Last-Modified: Tue, 13 Apr 2021 15:13:59 GMT
+Connection: keep-alive
+ETag: "6075b537-264"
+Accept-Ranges: bytes
+```
+
+切换到前面的控制台然后停止端口转发
+
+```bash
+Forwarding from 127.0.0.1:8080 -> 80
+Forwarding from [::1]:8080 -> 80
+Handling connection for 8080
+^C
+```
+
+### 日志
+
+```bash
+$ kubectl logs $POD_NAME
+...
+127.0.0.1 - - [02/May/2021:05:29:25 +0000] "HEAD / HTTP/1.1" 200 0 "-" "curl/7.64.0" "-"
+```
+
+### Exec
+
+```bash
+$ kubectl exec -ti $POD_NAME -- nginx -v
+nginx version: nginx/1.19.10
+```
+
+### Services
+
+使用  NodePort 暴露 nginx Deployment：
+
+```bash
+kubectl expose deployment nginx --port 80 --type NodePort
+```
+
+创建防火墙规则允许远程访问
+
+```bash
+NODE_PORT=$(kubectl get svc nginx \
+  --output=jsonpath='{range .spec.ports[0]}{.nodePort}')
+
+gcloud compute firewall-rules create kubernetes-the-hard-way-allow-nginx-service \
+  --allow=tcp:${NODE_PORT} \
+  --network kubernetes-the-hard-way
+```
+
+发起 HTTP 请求
+
+```bash
+EXTERNAL_IP=$(gcloud compute instances describe worker-0 \
+  --format 'value(networkInterfaces[0].accessConfigs[0].natIP)')
+  
+curl -I http://${EXTERNAL_IP}:${NODE_PORT}
+```
+
+输出
+
+```bash
+HTTP/1.1 200 OK
+Server: nginx/1.19.10
+Date: Sun, 02 May 2021 05:31:52 GMT
+Content-Type: text/html
+Content-Length: 612
+Last-Modified: Tue, 13 Apr 2021 15:13:59 GMT
+Connection: keep-alive
+ETag: "6075b537-264"
+Accept-Ranges: bytes
+```
+
+## 环境清理
+
+本部分我们将会删除之前创建的额计算资源。
+
+### 计算实例
+
+删除控制和工作计算实例
+
+```bash
+gcloud -q compute instances delete \
+  controller-0 controller-1 controller-2 \
+  worker-0 worker-1 worker-2 \
+  --zone $(gcloud config get-value compute/zone)
+```
+
+### 网络
+
+删除外部的负载均衡器网络资源:
+
+```bash
+gcloud -q compute forwarding-rules delete kubernetes-forwarding-rule \
+  --region $(gcloud config get-value compute/region)
+gcloud -q compute target-pools delete kubernetes-target-pool
+gcloud -q compute http-health-checks delete kubernetes
+gcloud -q compute addresses delete kubernetes-the-hard-way
+```
+
+删除 `kubernetes-the-hard-way` 防火墙规则：
+
+```bash
+gcloud -q compute firewall-rules delete \
+  kubernetes-the-hard-way-allow-nginx-service \
+  kubernetes-the-hard-way-allow-internal \
+  kubernetes-the-hard-way-allow-external \
+  kubernetes-the-hard-way-allow-health-check
+```
+
+删除 `kubernetes-the-hard-way` 网络 VPC：
+
+```bash
+gcloud -q compute routes delete \
+  kubernetes-route-10-200-0-0-24 \
+  kubernetes-route-10-200-1-0-24 \
+  kubernetes-route-10-200-2-0-24
+gcloud -q compute networks subnets delete kubernetes
+gcloud -q compute networks delete kubernetes-the-hard-way
+```
+
+删除 `kubernetes-the-hard-way` 计算地址
+
+```bash
+gcloud -q compute addresses delete kubernetes-the-hard-way \
+  --region $(gcloud config get-value compute/region)
+```
+

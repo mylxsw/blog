@@ -1,0 +1,72 @@
+# MySQL 索引条件下推优化
+
+索引条件下推（Index Condition Pushdown，ICP） 用于对索引访问方法 `range` 、`ref`、`eq_ref`、`null` 以及 BKA（Batched Key Access）进行优化。其原理是当我们访问索引时，检查 `WHERE` 条件中引用了索引字段的那部分条件（Pushed Index Condition），如果不满足这些条件，就不需要再读取完整的表记录了。
+
+> 从 MariaDB 5.3.3 开始，索引条件下推选项默认开启，执行这个命令关闭 `SET optimizer_switch='index_condition_pushdown=off'`
+
+当 ICP 被使用时，执行计划会显示 `Using index condition`：
+
+```sql
+MariaDB [test]> explain select * from tbl where key_col1 between 10 and 11 and key_col2 like '%foo%';
+-------+---------------+----------+---------+------+------+-----------------------+
+type  | possible_keys | key      | key_len | ref  | rows | Extra                 |
+-------+---------------+----------+---------+------+------+-----------------------+
+range | key_col1      | key_col1 | 5       | NULL |    2 | Using index condition |
+-------+---------------+----------+---------+------+------+-----------------------+
+1 row in set (0.01 sec)
+```
+
+## ICP 的原理
+
+在基于磁盘的存储引擎中，索引查询分为两步，如下图所示
+
+![index-condition-pushdown-1](https://mariadb.com/kb/en/index-condition-pushdown/+image/index-access-2phases)
+
+ICP 优化通过检查索引记录是否满足它可以检查的那部分 `WHERE` 条件来试图减少读取完整记录的次数。
+
+![index-condition-pushdown-2](https://mariadb.com/kb/en/index-condition-pushdown/+image/index-access-with-icp)
+
+速度会快多少取决于有多少记录会在这个过程中被过滤掉以及读取它们的成本有多高。前者取决于查询和数据集，当表记录在磁盘上很大时，后者通常会更大。
+
+## 加速示例
+
+我使用DBT-3基准数据，比例因子= 1。 由于基准测试定义的索引很少，因此我们添加了一个多列索引（索引条件下推通常对多列索引很有用：第一个组件是完成索引访问的对象，随后的几列 阅读并检查条件）。
+
+```sql
+alter table lineitem add index s_r (l_shipdate, l_receiptdate);
+```
+
+该查询是查找1993年1月发出的大订单（l_quantity> 40），该订单花费了25天以上的时间才能发货：
+
+```sql
+select count(*) from lineitem
+where
+  l_shipdate between '1993-01-01' and '1993-02-01' and
+  datediff(l_receiptdate,l_shipdate) > 25 and
+  l_quantity > 40;
+```
+
+没有 ICP 优化时
+
+```sql
+-+----------+-------+----------------------+-----+---------+------+--------+-------------+
+ | table    | type | possible_keys         | key | key_len | ref | rows    | Extra       |
+-+----------+-------+----------------------+-----+---------+------+--------+-------------+
+ | lineitem | range | s_r                  | s_r | 4       | NULL | 152064 | Using where |
+-+----------+-------+----------------------+-----+---------+------+--------+-------------+
+```
+
+有 ICP 优化时
+
+```sql
+-+-----------+-------+---------------+-----+---------+------+--------+------------------------------------+
+ | table     | type | possible_keys | key | key_len | ref | rows     | Extra                              |
+-+-----------+-------+---------------+-----+---------+------+--------+------------------------------------+
+ | lineitem | range | s_r            | s_r | 4       | NULL | 152064 | Using index condition; Using where |
+-+-----------+-------+---------------+-----+---------+------+--------+------------------------------------+
+```
+
+加速的地方在于
+
+- 冷缓冲池：从 5 分钟下降到 1 分钟
+- 热缓冲池：从 0.19 秒下降到 0.07 秒

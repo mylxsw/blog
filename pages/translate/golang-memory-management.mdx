@@ -1,0 +1,99 @@
+# Go 内存管理和分配
+
+> 本文基于 Go 1.13，英文原文 [Go: Memory Management and Allocation](https://medium.com/a-journey-with-go/go-memory-management-and-allocation-a7396d430f44)
+
+当不再使用内存时，Go 的标准库会自动完成从分配到回收的内存管理。尽管开发人员并不需要处理它，但是 Go 进行的基础管理已经得到了很好地优化，并且充满了有趣的概念。
+
+## Allocation on the heap
+
+内存管理旨在并发环境中快速执行并且与垃圾收集器集成在一起。让我们看看下面这个简单的示例：
+
+```go
+package main
+
+type smallStruct struct {
+   a, b int64
+   c, d float64
+}
+
+func main() {
+   smallAllocation()
+}
+
+//go:noinline
+func smallAllocation() *smallStruct {
+   return &smallStruct{}
+}
+```
+
+标注 `//go:noinline` 是为了禁止编译时删除函数的内联优化，因为该优化会导致这里没有内存分配。
+
+运行逃逸分析命令 `go tool compile "-m" main.go` 来确定 Go 的内存分配： 
+
+```
+main.go:14:9: &smallStruct literal escapes to heap
+```
+
+借助 `go tool compile -S main.go` 输出应用的汇编代码，可以明确的看到内存分配过程：
+
+```
+0x001d 00029 (main.go:14)   LEAQ   type."".smallStruct(SB), AX
+0x0024 00036 (main.go:14)  PCDATA $0, $0
+0x0024 00036 (main.go:14)  MOVQ   AX, (SP)
+0x0028 00040 (main.go:14)  CALL   runtime.newobject(SB)
+```
+
+函数 `newobject` 是用于新分配和代理 `mallocgc` 的的内建函数，该函数在堆上管理内存。在 Go 中有两种策略，一种用于分配较小的内存，一种用于分配较大的内存。
+
+## Small allocation
+
+对于 32 kb 以下的小的内存分配来说，Go 会尝试从名为 **mcache** 的本地缓存中获取内存。这个缓存处理了一个称为 `mspan` 的 span（32 kb 的内存块） 列表，其中包含了可用于分配的内存：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/20210416120419.png)
+
+每个线程 `M` 都被分配给了一个处理器 `P`，并且一次最多处理一个 Goroutine。当分配内存时，我们的当前的 Goroutine 将会使用它的 `P`的本地缓存来查询在 span 列表中第一个可用的空闲对象。使用本地缓存不需要加锁，因此分配更加高效。
+
+span 列表被划分为了大约 70 个大小的类别，从 8 bytes 到 32k bytes，可以存储不同的对象大小：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/20210416120818.png)
+
+每个 span 存在两次：一个不包含指针的对象列表和一个包含指针的对象列表。因为不需要扫描不包含任何指针的 span，这种区别使得垃圾收集器更加轻松。
+
+在我们前面的例子中，结构体的大小为 32 bytes，匹配 32 bytes 的 span：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/20210416123204.png)
+
+现在，我们可以想象下，如果 span 在分配过程中没有足够的槽该怎么办呢？Go 集中维护了一系列的各种大小类别的 span 列表，称之为 `mcentral`，其中包含空闲对象的 spans 和已用的 spans：
+
+![img](https://miro.medium.com/max/1158/1*uosVmYwGEqo9x4jhWBoXhg.png)
+
+`mcentral` 维护了一个 spans 的双向链表；每一个项都有一个之前 span 和下一个 span 的指针。非空 span 列表 —— “非空” 表示列表中至少有一个空闲的槽供分配——可能包含一些已经在使用的内存。确实这样，当垃圾收集器清除内存的时候，它可以清除部分 span （被标记为不再使用的部分）—— 并将其放回到非空列表中。
+
+我们的程序现在可以从 central 列表中请求一个 span（如果槽用完了）：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/20210416124058.png)
+
+如果空闲列表中没有可用的 spans，Go 需要一种方法从 central 列表中获取新的 spans，新的 spans 将会从堆中分配，然后链接到 central 列表：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/20210416124241.png)
+
+堆会在需要的时候从操作系统申请内存。如果需要更多内存，对将会分配一个称为 `arena` 的大块内存，在 64 位架构中大小时 64Mb，其它架构中是 4M。arena 也使用 span 映射内存页：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/20210416124538.png)
+
+## Large allocation
+
+Go 不会使用本地缓存来管理大的内存分配。这种大于 32kb 的内存分配将四舍五入为内存页的大小，然后将内存页直接分配给堆。
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/20210416124741.png)
+
+## Big picture
+
+现在我们可以很好地理解内存分配过程中发生的事情了，让我们把所有的组件放在一起，获得一个完整的图：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/20210416124838.png)
+
+## Inspiration
+
+内存分配器原本是基于 TCMalloc，一个由 Google 创建的专门为并发环境优化的内存分配器。[TCMalloc 的文档](http://goog-perftools.sourceforge.net/doc/tcmalloc.html) 值得一读，你会发现很多之前已经解释过的概念。
+

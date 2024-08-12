@@ -1,0 +1,55 @@
+# Go 信号处理
+
+[TOC]
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/18/20210418-62baafe3ba72a601d98ce70fd9ad206e.png)
+
+> 本文基于 Go 1.13，英文原文 [Go: gsignal, Master of Signals](https://medium.com/a-journey-with-go/go-gsignal-master-of-signals-329f7ff39391)
+
+包 `signal` 提供了信号处理功能，让我们的 Go 程序可以对传入的信号做出响应。让我们先从监听器开始，然后再深入内部。
+
+## Subscription
+
+在 Go 中，通过 channel 来实现对信号的订阅。下面是一个监听所有中断信号或者控制台调整大小信号的程序示例：
+
+![](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/18/20210418-933cbbedf5a2ffce27fee38e057a06d7.png)
+
+每个 `os.Signal` 通道监听它们自己的事件集。下面是订阅工作流程的图：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/18/20210418-55cd7f8529245b152a8ff27b6953c892.png)
+
+Go 也提供了停止通道通知的能力 —— 函数 `Stop(os.Signal)` —— 或者忽略信号 —— 函数 `Ignore(...os.Signal)`。下面是一个简单的例子：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/18/20210418-5ad2a044e26124a0d88dcb9ba834f560.png)
+
+该程序无法被 `CTRL+C` 中断，并且永远不会停止，因为第二次在第二次从该通道接收之前，该通道已经停止监听终端大小调整信号。现在，我们来了解下如何构建处理信号监听器和信号处理。
+
+## gsignal
+
+在初始化阶段，`signal` 会产生一个 Goroutine，该 Goroutine 会循环执行并且作为消费者处理信号。这个循环会在接收到通知时停止睡眠。下面是第一步
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/18/20210418-dda750bbacd35978ee683f6df610fcd1.png)
+
+然后，当信号到达程序时，信号处理器会委派该信号到一个特殊称为 `gsignal` 的 Goroutine。这个 Goroutine 使用固定且无法增长的堆栈（32k 大小，为了满足不同操作系统的要求）。每一个线程（`M`）都有一个内部的 `gsignal` Goroutine 来处理信号。如下图
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/18/20210418-c94cc135976d440878e8945d2fdddd4f.png)
+
+`gsignal` 会分析这个信号，检查是否它可以处理，然后唤醒睡眠的 Goroutine 并将信号发送到队列：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/18/20210418-b03e74a0ae8d025d04030b8b7952df1a.png)
+
+诸如 `SIGBUS` 和 `SIGFPE` 等同步信号是不可管理的，它们将会被转换为 `panic`。
+
+接下来，这个循环的 Goroutine 就可以处理信号了。它首先会发现订阅这个事件的通道，然后把信号推送给它们：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/18/20210418-b92924f61bda622db94aa3540720da4a.png)
+
+下图使用工具 `go tool trace` 生成了展示这个循环的 Goroutine 处理信号的过程：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/18/20210418-9553e9c9b86ddf3fa40e93623a48456f.png)
+
+`gsignal` 的锁或者块会使得信号处理变得很麻烦。由于它是固定大小的，因此无法分配内存。这就是为什么信号处理链中拥有两个独立的 Goroutines：一个在信号到达时立即让它们排队，另一个则在同一个队列中循环处理它们。
+
+现在我们可以使用新的组件更新第一部分的那个图了：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/18/20210418-764c95251683fa88b6180edd2619e033.png)

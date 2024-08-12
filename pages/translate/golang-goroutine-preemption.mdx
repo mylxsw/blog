@@ -1,0 +1,171 @@
+# Go 协程抢占机制
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/17/20210417-803f4764f1eb2d0c781c6429e55d900c.png)
+
+> 本文基于 Go 1.13，英文原文 [Go: Goroutine and Preemption](https://medium.com/a-journey-with-go/go-goroutine-and-preemption-d6bc2aa2f4b7)
+>
+> 在 Go 1.14 中实现了一种异步的抢占机制，从而使本文中部分内容过时了。当然，我将会对这些部分进行标记，从而使本文对于理解异步抢占依然有用。
+
+借助内部的调度程序， Go 实现了对 Goroutines 的管理。该调度器的旨在实现 Goroutines 之间的切换，从而保证它们都能够得到可运行的时间。但是，调度器可能需要抢占 Goroutines 。
+
+## Scheduler and preemption
+
+让我们用一个简单的例子来看看调度器使如何工作的：为了便于阅读，这些示例中将不会使用原子操作。
+
+```go
+func main() {
+   var total int
+   var wg sync.WaitGroup
+
+   for i := 0; i < 10; i++ {
+      wg.Add(1)
+      go func() {
+         for j := 0; j < 1000; j++ {
+            total += readNumber()
+         }
+         wg.Done()
+      }()
+   }
+
+   wg.Wait()
+}
+
+//go:noinline
+func readNumber() int {
+   return rand.Intn(10)
+}
+```
+
+下图使 Traces 信息
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/17/20210417-5871f275c99454113005d9e4593204b3.png)
+
+我们清晰的看到调度程序在处理器上切换 Goroutines，给它们运行时间。为了改变运行时间，Go 会安排 Goroutine 在由于系统调用，通道阻塞，睡眠，等待互斥锁等原因而停止时停止运行。调度器受益于数字生成器中的互斥锁，从而为所有的 Goroutines 提供运行时间。如下图所示
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/17/20210417-787cffdb2642990de8ce33d043db6fd3.png)
+
+但是，如果 Go 没有任何暂停， 它依然需要一种方法来停止正在运行的 Goroutine。这个动作称之为抢占，它允许调度器切换 Goroutines。任何运行时间超过 10ms 的 Goroutines 都会被标记为可抢占。然后，当 Goroutine的堆栈增加时，将在函数开始时进行抢占。
+
+让我们看一个使用数字生成器，具有和前面例子一样的锁行为，但是该锁已经被修改为不再使用：
+
+```go
+func main() {
+   var total int
+   var wg sync.WaitGroup
+
+   for i := gen(0); i < 20; i++ {
+      wg.Add(1)
+      go func(g gen) {
+         for j := 0; j < 1e7; j++ {
+            total += g.readNumber()
+         }
+         wg.Done()
+      }(i)
+   }
+
+   wg.Wait()
+}
+
+var generators [20]*rand.Rand
+
+func init() {
+   for i := int64(0); i < 20; i++  {
+      generators[i] = rand.New(rand.NewSource(i).(rand.Source64))
+   }
+}
+
+type gen int
+//go:noinline
+func (g gen) readNumber() int {
+   return generators[int(g)].Intn(10)
+}
+```
+
+下图是 Traces 信息
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/17/20210417-69cba4bb99b3bfeed8081050bf5acba0.png)
+
+Goroutines 在函数入口还是被抢占了
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/17/20210417-c6f6d53007e3cba823a8e131419ca338.png)
+
+这里的检查是由编译器自动添加的；下面是前面例子生成的[汇编码](https://golang.org/doc/asm)：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/17/20210417-a3daeafaeb10dd47a8eb65ed0bcb4bd9.png)
+
+运行时通过在每个函数运行前插入指令来确保栈的增长。这也使得调度器在需要的时候可以运行。
+
+大多数情况下，Goroutines 可以让调度器来调度它们，但是，如果使一个没有函数调用的循环的话，调度过程将没有机会运行。
+
+## Forcing preemption
+
+让我们用一个简单的例子看看循环时如何阻塞住调度的：
+
+```go
+func main() {
+   var total int
+   var wg sync.WaitGroup
+
+   for i := 0; i < 20; i++ {
+      wg.Add(1)
+      go func() {
+         for j := 0; j < 1e6; j++ {
+            total ++
+         }
+         wg.Done()
+      }()
+   }
+
+   wg.Wait()
+}
+```
+
+由于这里没有函数调用，并且 Goroutines 永远不会阻塞，因此调度器不会抢占它们。我们可以在 Traces 中看到
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/17/20210417-1cacd653069ad543fdbb429e3795faff.png)
+
+当然， Go 提供了一些解决方案来解决这个问题：
+
+- 使用 `runtime.Gosched()` 强制调度器运行
+
+  ```go
+  for j := 0; j < 1e8; j++ {
+     if j % 1e7 == 0 {
+        runtime.Gosched()
+     }
+     total ++
+  }
+  ```
+
+  下面时新的 Traces：
+
+  ![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/17/20210417-a212321e5da58bc015fec606ded4c06b.png)
+
+- 使用允许循环被抢占的实验特性。通过使用`GOEXPERIMENT=preemptibleloops` 重新构建 [Go 工具链](https://golang.org/doc/install/source) 或者是使用 `go build` 编译时添加 `-gcflags -d=ssa/insert_resched_checks/on` 选项来启用该特性。这样，不需要修改代码，新的 Traces 如下图
+
+  ![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/17/20210417-b81e753e10c5c18af96342707677f68a.png)
+
+当启用循环中的抢占特性时，编译器将会在生成 SSA 代码时添加一个 pass：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/17/20210417-993a235aea0c3522f02f71c92723cf13.png)
+
+这个 pass 将会添加调用调度器的指令
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/17/20210417-0ca591e17e2c3bd1d9bead3c45461c11.png)
+
+由于强制调度器触发的次数可能超过了必要的次数，这种方法可能会降低代码的速度。这里时这两个版本的基准测试结果：
+
+```
+name    old time/op  new time/op  delta
+Loop-8   2.18s ± 2%   2.05s ± 1%  -6.23%
+```
+
+> 该问题已经被 Go 1.14 的异步抢占机制修复。当然，这里对两个方案的解释还是正确的。`runtime.GoSched()` 可以被用来触发调度器，可抢占的循环选项依然是标准库的一部分。
+
+## Incoming improvements
+
+到目前为止，调度器使用的协作式抢占技术可以覆盖大多数情况。但是，在一些特殊场景下，它可能会称为疼点。一个 “[非协作式抢占](https://github.com/golang/proposal/blob/master/design/24543-non-cooperative-preemption.md)” 的提案已经被提交了，该提案解决了文中提到的问题：
+
+> 我建议 Go 实现非协作的抢占机制，这样可以允许 Goroutines 在任何时候都可以被抢占，而无需进行明确的检查。这种方法解决了延迟抢占问题，并且零运行时开销。
+
+该提案中提出了几种各具优缺点的技术，这些技术可能会应用在下一版本的 Go 语言中。

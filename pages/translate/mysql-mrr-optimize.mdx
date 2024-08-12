@@ -1,0 +1,165 @@
+# MySQL MRR 优化原理
+
+MRR 是 MySQL 中的一种查询优化机制，它通过把随机的磁盘 I/O 转换为顺序的磁盘 I/O 来提高索引查询性能。
+
+MRR 可以和 `range` 访问，使用 BKA (Batched Key Access) 的 `ref` 和 `eq_ref` 访问一起使用。如下图
+
+![mrr-usage](https://mariadb.com/kb/en/multi-range-read-optimization/+image/possible-mrr-uses)
+
+## 场景
+
+### 场景 1： 范围查询中的  Rowid 排序
+
+下面是一个 `range` 查询
+
+```sql
+explain select * from tbl where tbl.key1 between 1000 and 2000;
++----+-------------+-------+-------+---------------+------+---------+------+------+-----------------------+
+| id | select_type | table | type  | possible_keys | key  | key_len | ref  | rows | Extra                 |
++----+-------------+-------+-------+---------------+------+---------+------+------+-----------------------+
+|  1 | SIMPLE      | tbl   | range | key1          | key1 | 5       | NULL |  960 | Using index condition |
++----+-------------+-------+-------+---------------+------+---------+------+------+-----------------------+
+```
+
+当这个 SQL 执行时，磁盘 I/O 如下图红线所示
+
+![random-io](https://mariadb.com/kb/en/multi-range-read-optimization/+image/no-mrr-access-pattern)
+
+执行器将会在随机的位置命中表中的行，如蓝色线条所示。当表中的数据量非常大时，每条记录的读取都要进行一次磁盘访问，查询将会非常耗时。例如，对于一个 10000 转的机械硬盘来说，每秒钟能够执行167次磁盘寻址，所以在最差的情况下，每秒只能读取 167 条记录。对于固态硬盘来说，并不需要进行磁盘寻址，所以情况可能会好一些，但是在很多情况下性能依然会很差。
+
+MRR 优化的目的是对需要从磁盘读取的记录先排序，然后进行一次有序的磁盘扫描，从而加速磁盘访问速度。
+
+```sql
+set optimizer_switch='mrr=on';
+Query OK, 0 rows affected (0.06 sec)
+
+explain select * from tbl where tbl.key1 between 1000 and 2000;
++----+-------------+-------+-------+---------------+------+---------+------+------+-------------------------------------------+
+| id | select_type | table | type  | possible_keys | key  | key_len | ref  | rows | Extra                                     |
++----+-------------+-------+-------+---------------+------+---------+------+------+-------------------------------------------+
+|  1 | SIMPLE      | tbl   | range | key1          | key1 | 5       | NULL |  960 | Using index condition; Rowid-ordered scan |
++----+-------------+-------+-------+---------------+------+---------+------+------+-------------------------------------------+
+1 row in set (0.03 sec)
+```
+
+执行过程如下图所示
+
+![mmr-execute](https://mariadb.com/kb/en/multi-range-read-optimization/+image/mrr-access-pattern)
+
+顺序的磁盘数据读取通常会更快，因为：
+
+- 磁盘磁头不需要来回移动
+- 可以充分利用磁盘 IO 预读技术
+- 每个磁盘页只会被读取一次，这就意味着我们不需要依赖磁盘缓存（或缓冲区）来避免同一页被读取多次
+
+当然，有时候这也可能会造成一些不利的影响：
+
+- 当要扫描的数据量很小的时候，以至于完全可以使用操作系统的磁盘缓存，就会发现 MRR 的唯一作用就是额外的缓冲和排序增加了一些 CPU 负载
+- `LIMIT n` 和 `ORDER BY ... LIMIT n` 查询时，如果 `n` 非常小，查询可能会变慢。原因是 MRR 读取磁盘是顺序读取的，但是 `ORDER BY ...LIMIT n` 则希望按照索引顺序返回前 `n` 条记录
+
+### 场景 2：BKA 中的 Rowid 排序
+
+与范围查询相同，BKA(Batched Key Access) 也可以以同样的方式从 rowid 排序中获益。如果一个 Join 使用到了索引查找：
+
+```sql
+explain select * from t1,t2 where t2.key1=t1.col1;
++----+-------------+-------+------+---------------+------+---------+--------------+------+-------------+
+| id | select_type | table | type | possible_keys | key  | key_len | ref          | rows | Extra       |
++----+-------------+-------+------+---------------+------+---------+--------------+------+-------------+
+|  1 | SIMPLE      | t1    | ALL  | NULL          | NULL | NULL    | NULL         | 1000 | Using where |
+|  1 | SIMPLE      | t2    | ref  | key1          | key1 | 5       | test.t1.col1 |    1 |             |
++----+-------------+-------+------+---------------+------+---------+--------------+------+-------------+
+2 rows in set (0.00 sec)
+```
+
+这个查询将会导致通过`t2.key=t1.col` 进行查询时命中 `t2` 中的随机位置。如果启用了 MRR 和 BKA，那么对 `t2` 的访问将会使用基于 Rowid 的顺序扫描（Rowid-ordered scan）。
+
+```sql
+set optimizer_switch='mrr=on';
+Query OK, 0 rows affected (0.06 sec)
+
+set join_cache_level=6;
+Query OK, 0 rows affected (0.00 sec)
+
+explain select * from t1,t2 where t2.key1=t1.col1;
++----+-------------+-------+------+---------------+------+---------+--------------+------+--------------------------------------------------------+
+| id | select_type | table | type | possible_keys | key  | key_len | ref          | rows | Extra                                                  |
++----+-------------+-------+------+---------------+------+---------+--------------+------+--------------------------------------------------------+
+|  1 | SIMPLE      | t1    | ALL  | NULL          | NULL | NULL    | NULL         | 1000 | Using where                                            |
+|  1 | SIMPLE      | t2    | ref  | key1          | key1 | 5       | test.t1.col1 |    1 | Using join buffer (flat, BKA join); Rowid-ordered scan |
++----+-------------+-------+------+---------------+------+---------+--------------+------+--------------------------------------------------------+
+2 rows in set (0.00 sec)
+```
+
+优点和范围查找相似。加速的另一个来源是这个属性：如果 `t1` 中有多个记录具有相同的 `t1.col1` 值，常规的 `Nested-Loops join` 将会对 `t2.key1=t1.col1` 的相同值执行多次索引查找。取决于 join 的大小，这些查找不一定能够命中缓存，使用 BKA 和 MRR 就可以避免重复的索引查找。
+
+### 场景 3：BKA 的 Key 排序
+
+让我们再次考虑嵌套循环连接示例，它对第二个表进行 `ref` 访问
+
+```sql
+explain select * from t1,t2 where t2.key1=t1.col1;
++----+-------------+-------+------+---------------+------+---------+--------------+------+-------------+
+| id | select_type | table | type | possible_keys | key  | key_len | ref          | rows | Extra       |
++----+-------------+-------+------+---------------+------+---------+--------------+------+-------------+
+|  1 | SIMPLE      | t1    | ALL  | NULL          | NULL | NULL    | NULL         | 1000 | Using where |
+|  1 | SIMPLE      | t2    | ref  | key1          | key1 | 5       | test.t1.col1 |    1 |             |
++----+-------------+-------+------+---------------+------+---------+--------------+------+-------------+
+```
+
+该查询计划的执行将会导致对索引 `t2.key1` 的随机命中：
+
+![bka-key-sorting](https://mariadb.com/kb/en/multi-range-read-optimization/+image/key-sorting-regular-nl-join)
+
+在第 5 步中，我们重新读取了第 2 步中已经读取过的索引页，第 4 步中读取的索引页也在第 6 步中被重复读取。如果访问的所有页都在缓存中，这并不是什么问题。但是，如果缓存命中率很低，则会命中磁盘，这对查找和排序就很有意义了。
+
+![bak-key-sorting-2](https://mariadb.com/kb/en/multi-range-read-optimization/+image/key-sorting-join)
+
+这个图大致表表述了  **Key-ordered scan** 的作用。
+
+```sql
+set optimizer_switch='mrr=on,mrr_sort_keys=on';
+Query OK, 0 rows affected (0.00 sec)
+
+set join_cache_level=6;
+Query OK, 0 rows affected (0.02 sec)
+explain select * from t1,t2 where t2.key1=t1.col1\G
+*************************** 1. row ***************************
+           id: 1
+  select_type: SIMPLE
+        table: t1
+         type: ALL
+possible_keys: a
+          key: NULL
+      key_len: NULL
+          ref: NULL
+         rows: 1000
+        Extra: Using where
+*************************** 2. row ***************************
+           id: 1
+  select_type: SIMPLE
+        table: t2
+         type: ref
+possible_keys: key1
+          key: key1
+      key_len: 5
+          ref: test.t1.col1
+         rows: 1
+        Extra: Using join buffer (flat, BKA join); Key-ordered Rowid-ordered scan
+2 rows in set (0.00 sec)
+```
+
+## 总结
+
+- MRR 用于范围查询 `range` 和表关联的 BKA
+- 当对小表查询的时候，MRR 可能会降低查询性能，所以默认情况下是关闭的
+- MRR 有两种策略：**Rowid-ordered scan** 和 **Key-ordered scan**，通过 `EXPLAIN` 执行计划的 `Extra` 字段查看
+- 与 MRR 有关的优化器开关 `optimizer_switch` 有三个
+  - `mrr=on` 启用 MRR 和 Rowid-ordered scan
+  - `mrr_sort_keys=on` 启用 Key-ordered scan （`mrr=on` 时有效）
+  - `mrr_cost_based=on` 启用基于成本选择是否使用 MRR，当前不推荐（成本模型还没有经过充分的验证）
+
+---
+
+原文：[Multi Range Read Optimization](https://mariadb.com/kb/en/multi-range-read-optimization/)
+

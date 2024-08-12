@@ -8,7 +8,13 @@ const config: DocsThemeConfig = {
   },
   footer: {
     text: new Date().getFullYear() + ' © by mylxsw | Powered by Nextra',
-  }
+  },
+  editLink: {
+    component: null,
+  },
+  feedback: {
+    content: null,
+  },
 }
 
 export default config

@@ -1,0 +1,109 @@
+# Go 编译器概览
+
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/17/20210417-4490e5f84b285e3e021ce241644fa19c.png)
+
+> 本文基于 Go 1.13，英文原文 [Go: Overview of the Compiler](https://medium.com/a-journey-with-go/go-overview-of-the-compiler-4e5a153ca889)
+
+Go 编译器时 Go 生态中的一个重要的工具，它是我们将我们的程序构建为可执行文件的重要步骤之一。编译器的历史非常悠久，它最初是使用 C 语言编写的，后来迁移到了 Go 语言实现，在未来还由更多的优化和清理工作在持续的推进。
+
+## Phases
+
+Go 编译器由四个阶段组成，这四个阶段可以分为两类：
+
+- **前端** 这个阶段会运行源码的分析并且生成源码的抽象语法树（AST）
+- **后端** 第二个阶段将源码转换为机器码，其中会对代码做一些优化
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/17/20210417-c7a6ea789b97ec8b49abb553c1bc47d2.png)
+
+为了更好的理解每一个阶段，我们看看下面这个简单的程序：
+
+```go
+package main
+
+func main() {
+	a := 1
+	b := 2
+	if true {
+		add(a, b)
+	}
+}
+
+func add(a, b int) {
+	println(a + b)
+}
+```
+
+## Parsing
+
+第一个阶段非常直接并且在文档中也很好的解释了：
+
+> 在编译的第一个阶段会对源码进行词法分析（tokenize），语法分析（parsed），并且为每个源文件构建一个语法树。
+
+词法分析器（lexer）是第一个运行的软件包，它会将源码分解为 Token，下面是前面例子的输出：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/17/20210417-7a2899e4115dd01f185433f4508924d1.png)
+
+一旦该步骤完成，接下来就需要解析这些 Token 来构建一棵语法树。
+
+## AST transformation
+
+得益于命令 `go tool compile` 配合选项 `-W` 的支持，抽象语法树的转换可以如下图展示：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/17/20210417-ac2cbb8c892174e6142a401a4ff6cb40.png)
+
+这个阶段也包含了一些优化，比如内联（inlining）。在我们的例子中，方法 `add` 已经被内联，因此我们并没有看到任何 对方法 `add` 的 `CALLFUNC` 指令。让我们再次运行命令，这次使用选项 `-l` 来禁用内联：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/17/20210417-1a78bbabf4269304add58d6f934416a0.png)
+
+ AST 已经生成后，编译器就可以将其转换为带有 SSA 表现形式的低级中间码。
+
+## SSA generation
+
+SSA（Static Single Assignment）阶段会执行优化：无效代码消除，删除无用分支，使用常量值替换某些表达式等。
+
+可以使用命令 `GOSSAFUNC=main go tool compile main.go && open ssa.html` 命令生成一个 HTML 文档，该文档中记录了而生成的 SSA 代码的各种操作：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/17/20210417-ac69601ad40cf1f4de33d6271a14461d.png)
+
+生成的 SSA 位于 “start” 标签页下：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/17/20210417-f849fc76f59ebe065153182f2de39132.png)
+
+变量 `a` 和 `b` 以及`if` 条件在这里突出显示，稍后我们能够看到这些行的变化。改代码还向我们展示了编译器是如何通过 `printlock`，`printint`，`printnl`，`printunlock` 四个步骤来管理 `println` 函数的。编译器自动为我们添加了一个锁，并且根据参数类型的不同，以正确的方式调用相关方法输出它们。
+
+在我们的例子中，由于 `a` 和 `b` 在编译时已经是已知的，编译器可以计算出最终结果并且标记这两个变量不在需要。 接下来的 `opt` 将会优化这部分：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/17/20210417-4e8cb6b85ae55e5bdd884029e5281e75.png)
+
+这里的 `v11` 已经被`v4` 和 `v5` 相加的结果替代了，接下来的 `opt deadcode` 将会移除这些代码：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/17/20210417-9cc94033dc1642f333ee95016c751ef6.png)
+
+关于 `if` 条件， `opt` 阶段将会标记常量 `true` 为无效代码并且移除它们：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/17/20210417-2c9f80fb23bfb8a56bd1e79ad5e6e149.png)
+
+接下来的过程将会通过标记没有必要的代码块和条件为无效来简化控制流。后面这些代码块将会被作为无效代码被移除：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/17/20210417-4a2110065344281ac9329af659d22ab8.png)
+
+一旦所有过程都完成， Go 编译器接下来将会生成中间汇编码：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/17/20210417-a28767e5ccc8d155cb5e0c3004f349e6.png)
+
+下一阶段将会为二进制文件生成机器码。
+
+## Machine code generation
+
+编译器的最后一步是生成对象文件，在我们的例子中是 `main.o` 文件。从这个文件现在是可以使用`objdump` 工具反汇编的。
+
+`go tool compile`:
+
+![go tool compile](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/17/20210417-4d7feb8cea22830d5e95011da7e53ff4.png)
+
+`go tool objdump`:
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/2021/04/17/20210417-fb02889af9d3a6c54713e2f1d35f647f.png)
+
+对象文件生成后，接下来就可以使用命令 `go tool link` 直接传递给链接器生成最终的可执行文件了。

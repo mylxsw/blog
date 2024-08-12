@@ -1,0 +1,50 @@
+# Go 异步抢占机制
+
+> 本文基于 Go 1.14，英文原文 [Go: Asynchronous Preemption](https://medium.com/a-journey-with-go/go-asynchronous-preemption-b5194227371c)
+
+抢占是调度程序的重要组成部分，它可以让调度程序在 Goroutines 之间分配运行时间。确实，如果没有抢占，长期运行的 Goroutines 会一直占用着 CPU，这会阻碍其它 Goroutines 的调度。在 Go 1.14 中引入了一种新的异步抢占技术，给了调度器更多功能和控制。
+
+## Workflow
+
+让我们从一个需要抢占的示例开始，这段代码中，很多 Goroutines 不执行任何函数调用的循环执行，这意味着调度器没有机会抢占他们：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/20210416141508.png)
+
+当我们看这个程序运行的 Traces 可视化图时，我们清晰的看到 Goroutines 被抢占并且互相切换：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/20210416141656.png)
+
+我们可以看到，所有表示 Goroutines 的区块的长度是相同的。Goroutines 得到了近乎相同运行时间（大约 10/20ms）：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/20210416141841.png)
+
+异步抢占是基于时间条件触发的，当一个 Goroutine 运行超过 10ms 时，Go 会尝试抢占它。
+
+抢占是由线程 `sysmon` 发起的，该线程在专门用于监视运行时，包括长时间运行的 Goroutines，一旦一个 Goroutine 被检测到运行超过 10ms，它就会向当前线程发出信号来抢占该线程：
+
+![](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/20210416142428.png)
+
+信号处理器一旦接收到这个信号，线程会被中断来处理它，因此就不会再继续运行当前 Goroutine 了 —— 在我们的例子中是 G7。相反，它调度了 `gsignal` 来管理传入的信号，由于它发现这是一条抢占指令，因此它将其设置为在信号处理之后，程序恢复运行时停止当前 Goroutine 的指令。下图描绘的是第二阶段：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/20210416143000.png)
+
+## Implementation
+
+我们看到的第一个实现细节是选择的信号是 `SIGURG`, 在这个提案里解释了原因 [Proposal: Non-cooperative goroutine preemption](https://github.com/golang/proposal/blob/master/design/24543-non-cooperative-preemption.md)：
+
+> - 默认情况下，它应该是调试工具传递的信号
+> - 在 Go/C 混合的 libc 内部不应该使用该信号
+> - 它应该是一个可以没有任何可以无故虚假发生的信号
+> - 我们需要处理没有实时信号的平台
+
+接下来，一旦产生并且接收到了信号，Go 需要一种让程序恢复时停止当前 Goroutine 的方法。为此， Go 将向程序计数器中推送一条指令，让其看起来像是正在运行的程序调用了一个函数。该函数将暂存 Goroutine 并调度运行另一个 Goroutine 。
+
+我们应该注意的是 Go 不能再任意位置停止程序；当前指令必须是一个安全点。例如，如果当前程序正在调用运行时，因为运行时中的很多函数都是不应该被抢占的，因此此时抢占 Goroutine 是不安全的。
+
+这种新的抢占方式还有利于垃圾收集器，垃圾收集器可以以更加有效的方式停止所有的 Goroutines。现在 STOP THE WORLD 变得更加容易了，Go 只需要向每个正在运行的线程发送信号。下图是垃圾收集器的运行：
+
+![img](https://raw.githubusercontent.com/mylxsw/gallery/main/assets/20210416145507.png)
+
+每一个接收到信号的线程会暂停执行，直到垃圾收集器再次启动世界。
+
+最后，此功能附带了用于停止异步抢占的标识，如果由于升级到 GO 1.14 而发现任何不正确的信息，或者查看应用程序在进行或不进行异步抢占情况下的运行情况，可以使用 `GODEBUG=asyncpreemptoff=1` 选项来调试程序。

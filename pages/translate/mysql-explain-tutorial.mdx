@@ -1,0 +1,246 @@
+# MySQL EXPLAIN 命令详解
+
+## 语法
+
+```sql
+EXPLAIN tbl_name
+```
+
+或者
+
+```sql
+EXPLAIN [EXTENDED | PARTITIONS] 
+    {SELECT select_options | UPDATE update_options | DELETE delete_options}
+```
+
+## 描述
+
+`EXPLAIN` 语句可以用作 `DESCRIBE` 的同义词，或者作为一种获取 MariaDB 执行一条 `SELECT` （[MariaDB 10.0.5](https://mariadb.com/kb/en/mariadb-1005-release-notes/) 开始支持 `UPDATE` 和 `DELETE`语句） 语句的信息的方法：
+
+* `'EXPLAIN tbl_name'` 是 '[DESCRIBE](https://mariadb.com/kb/en/describe-command/) tbl_name' 或者 '[SHOW COLUMNS](https://mariadb.com/kb/en/show-columns/) FROM tbl_name' 语句的同义词。
+* 当在 `SELECT` 语句前面（从 [MariaDB 10.0.5](https://mariadb.com/kb/en/mariadb-1005-release-notes/) 开始支持 `UPDATE` 和 `DELETE` 语句）添加关键字 `EXPLAIN` 的时候，MariaDB 会显示出优化器中关于查询计划的信息。也就是说，MariaDB 解释了它将会如何处理 `SELECT`，`UPDATE` 或者 `DELETE` 语句，包含了表之间是如何Join的以及排序。 `EXPLAIN EXTENDED` 可以用来提供跟多的信息。
+* MySQL 5.1.5 开始至此 `EXPLAIN PARTITIONS`，它只在引入了分区表的时候才会起作用，关于细节请参考 [Partition pruning and selection](https://mariadb.com/kb/en/partition-pruning-and-selection/)。
+* [ANALYZE statement](https://mariadb.com/kb/en/analyze-statement/) 的执行结果中包含了 EXPLAIN 语句的输出，同时也提供了一些其它的统计信息，从 [MariaDB 10.1.0](https://mariadb.com/kb/en/mariadb-1010-release-notes/) 开始可用。
+* 在 [MariaDB 10.0.5](https://mariadb.com/kb/en/mariadb-1005-release-notes/) 之后，可以将 `EXPLAIN` 的输出打印到 [慢查询日志]((https://mariadb.com/kb/en/slow-query-log/)) 中。详细信息参考 [EXPLAIN in the Slow Query Log](https://mariadb.com/kb/en/explain-in-the-slow-query-log/)。
+
+从 [MariaDB 10.0](https://mariadb.com/kb/en/what-is-mariadb-100/) 开始，[SHOW EXPLAIN](https://mariadb.com/kb/en/show-explain/) 会输出正在运行正的语句的信息，在有些情况下，这种输出比 `EXPLAIN` 更加接近真实情况。
+
+从 [MariaDB 10.1](https://mariadb.com/kb/en/what-is-mariadb-101/) 开始，[ANALYZE statement](https://mariadb.com/kb/en/analyze-statement/) 语句会返回关于它的执行计划信息，同时也显示了一些额外的列，用来更加精确的预估优化器需要过滤和查询的行。
+
+这里有一个在线的 [EXPLAIN Analyzer](https://mariadb.com/kb/en/explain-analyzer/)，你可以用来与其他人分享 `EXPLAIN` 和 `EXPLAIN EXTENDED` 的输出。
+
+
+### EXPLAIN ... SELECT 输出列说明
+
+
+| 列名            | 描述                                                         |
+| --------------- | ------------------------------------------------------------ |
+| `id`            | 表关联的序号，每个 SELECT 对应一个序号（MySQL将多个语句改写为 join 除外） |
+| `select_type`   | `SELECT` 查询的类型                                          |
+| `table`         | 查询的表名                                                   |
+| `type`          | join类型，表示是如何找到表中的记录的                         |
+| `possible_keys` | 本次查询中可能用选用的索引                                   |
+| `key`           | 本次查询中用到的索引，`NULL` 的话说明没有用索引              |
+| `key_len`       | 所选择的索引长度有多少字节（只使用了联合索引中的部分时显示） |
+| `ref`           | 哪些列或常量被用于查找索引列上的值                           |
+| `rows`          | 本次查询中一共扫描了多少行数据（预估值）                     |
+| `Extra`         | 关于本次查询额外的信息                                       |
+
+下面是对 `EXPLAIN ... SELECT` 输出中的复杂的列的描述：
+
+#### select_type
+
+`select_type` 可能有下面这些值:
+
+| 值                     | 描述                                                         |
+| ---------------------- | ------------------------------------------------------------ |
+| `DEPENDENT SUBQUERY`   | The `SUBQUERY` is `DEPENDENT`.                               |
+| `DEPENDENT UNION`      | The `UNION` is `DEPENDENT`.                                  |
+| `DERIVED`              | The `SELECT` is `DERIVED` from the `PRIMARY`.                |
+| `MATERIALIZED`         | The `SUBQUERY` is [MATERIALIZED](https://mariadb.com/kb/en/semi-join-materialization-strategy/) |
+| `PRIMARY`              | 包含 UNION 或者子查询的大查询中，最左侧的那个查询            |
+| `SIMPLE`               | 查询语句不包含 UNION 或者子查询的，都认为是 SIMPLE           |
+| `SUBQUERY`             | The `SELECT` is a `SUBQUERY` of the `PRIMARY`.               |
+| `UNCACHEABLE SUBQUERY` | The `SUBQUERY` is `UNCACHEABLE`.                             |
+| `UNCACHEABLE UNION`    | The `UNION` is `UNCACHEABLE`.                                |
+| `UNION`                | 对于包含 `UNION`的查询，除了最左侧的为 `PRIMARY`，其它都是 `UNION` |
+| `UNION RESULT`         | `UNION` 使用临时表来去重，这个临时表的 select_type 就是 `UNION RESULT` |
+
+
+
+#### Type
+
+这一列包含了表示如何被访问的信息。
+
+| 值                | 描述                                                         |
+| ----------------- | ------------------------------------------------------------ |
+| `ALL`             | 执行全表扫描（所有的行都被读一遍）。如果表非常大，同时又与前面的表有关联的话，性能会很差！这种情况下优化器无法找到任何可用的索引 |
+| `const`           | 只查询到一条匹配的记录，在优化阶段之前读取了这一行，表中所有的列都被作为常量 |
+| `eq_ref`          | 使用了一个唯一索引来查询记录，这可能是用来查找记录的最好的查询计划 |
+| `fulltext`        | 使用全文索引来访问记录                                       |
+| `index_merge`     | 对多个索引使用了范围查询，查找到的记录被合并。结果中的key一列显示了使用了哪些 key |
+| `index_subquery`  | 与 ref 类似，但是用于已经转换为 key 查找的子查询             |
+| `index`           | 对使用的索引执行了完整扫描，比使用 ALL 更好一些，但是如果索引太大，并且表与前面的表有关联的话，性能依旧是很差 |
+| `range`           | 将使用一个或多个值范围上的键访问该表                         |
+| `ref_or_null`     | 与 ref 类似，但是如果第一个值没有找到，则会另外搜索 null 值。通常在子查询中会遇到 |
+| `ref`             | 一个非唯一索引或者唯一索引的前缀被用来匹配。如果前缀匹配的行数不多的话性能还可以 |
+| `system`          | 表中只有一行数据                                             |
+| `unique_subquery` | 与 eq_ref 类似，但是用于已经转换为 key 查找的子查询          |
+
+#### 额外信息
+
+这一列包含了一个或者多个下面的值，用 ';' 分隔
+
+> 注意，有一些值是在优化阶段之后被检测到的。
+
+在优化阶段可以对 `WHERE` 条件做下面这些改变：
+
+* 为 `WHERE` 条件添加 `ON` 和 `USING` 表达式
+* 常量传播: 如果查询条件中包含 `column=常量`，则会使用该常量替换所有的这一列的实例
+* 将常量表中所有的列替换为它们的值
+* 从 `WHERE` 条件中去掉使用到索引的键（它们将会在键查找的时候被使用）
+* 移除不可能的常量子表达式，例如 `WHERE '(a=1 and a=2) OR b=1'` 变为 `'b=1'`
+* 替换有相同值的列，例如 `WHERE` `a=b` 和 `a=c` 可能会被替换为 `'WHERE a=b and a=c and b=c'`
+* 添加额外的条件用于在早期检测出不可能的条件，主要在使用 `OUTER JOIN` 的时候，有些场景下我们会在 `WHERE` 条件中添加 `NULL` 值检测（部分不存在优化）。这可能在 Extra 中产生非预期的 `'Using where'`
+* 在每一个表级别上，我们会移除在读取之前的行时已经被测试过的表达式。例如： 当我们使用 `WHERE 't1.a=1 and t1.a=t2.b'` 来连接表 `t1` 和 `t2` 时，当检查在 `t2` 中我们已经知道为true的表达式时，就不需要检查 `'t1.a=1'`了
+
+
+| 值                                                           | 描述                                                         |
+| ------------------------------------------------------------ | ------------------------------------------------------------ |
+| `const row not found`                                        | 表是一个 system 表 (只有一条数据的表), 但是没有匹配到内容.   |
+| `Distinct`                                                   | 是否使用了 distinct 优化（去除重复）。只有最后一个表的 `SELECT` 会有该标记 |
+| `Full scan on NULL key`                                      | 这个表是子查询的一部分，如果用来匹配子查询的值是 `NULL` 的话，将会采用全表扫描 |
+| `Impossible HAVING`                                          | 使用的 `HAVING` 条件总是 false 的，因此 `SELECT` 永远不会返回数据 |
+| `Impossible WHERE` `noticed` `after` `reading` `const` `tables.` | 使用的 `WHERE` 条件 总是 false 的，因此 `SELECT` 永远不会返回数据。 这个条件在我们读取了所有的常量表和将 `WHERE` 条件中的列值作为常量之后再检测的。例如 `WHERE const_column=5` 和 `const_column` 的值是 4 |
+| `Impossible WHERE`                                           | 使用的 `WHERE` 条件总是 false 的，因此 `SELECT` 将不会返回任何记录。例如 `WHERE 1=2` |
+| `No matching min/max row`                                    | 在早期的 `MIN()`/`MAX()`值优化过程中检测到 `WHERE` 条件没有匹配到任何数据，因此函数返回 `NULL` |
+| `no matching row` `in` `const` `table`                       | 表示一个常量表，但是没有任何数据（一个只包含一个可能的匹配行的表） |
+| `No tables used`                                             | `SELECT` 是一个没有使用任何表的子查询，例如 `FROM DUAL` 或者没有 `FROM` 语句 |
+| `Not exists`                                                 | 如果已经找到一个匹配的行，则停止搜索更多行。在 `LEFT JOIN TABLE` 中显式的搜索一个不存在的行时，此优化与 `LEFT JOIN` 一起使用。例如 `SELECT * FROM t1 LEFT JOIN t2 on (...) WHERE t2.not_null_column IS NULL` ，因为 如果 ON 条件没有匹配的行时， `t2.not_null_column` 只能为 `NULL`，在只发现单个匹配的行时，我们可以停止搜索 |
+| `Open_frm_only`                                              | 针对 `information_schema` 表。对于每一个匹配的记录，只有 `frm` （表定义文件） 文件被打开 |
+| `Open_full_table`                                            | For `information_schema` tables. A full table open for each matching row is done to retrieve the requested information. (Slow) |
+| `Open_trigger_only`                                          | For `information_schema` tables. Only the trigger file definition was opened for each matching row. |
+| `Range checked` `for` `each` `record` `(index map: ...)`     | This only happens when there was no good default index to use but there may some index that could be used when we can treat all columns from previous table as constants. For each row combination the optimizer will decide which index to use (if any) to fetch a row from this table. This is not fast, but faster than a full table scan that is the only other choice. The index map is a bitmask that shows which index are considered for each row condition. |
+| `Scanned 0/1/all databases`                                  | For `information_schema` tables. Shows how many times we had to do a directory scan. |
+| `Select tables` `optimized` `away`                           | All tables in the join was optimized away. This happens when we are only using `COUNT(*)`, `MIN()` and `MAX()` functions in the `SELECT` and we where able to replace all of these with constants. |
+| `Skip_open_table`                                            | For `information_schema` tables. The queried table didn't need to be opened. |
+| `unique row not found`                                       | The table was detected to be a const table (a table with only one possible matching row) during the early optimization phase, but no row was found. |
+| `Using filesort`                                             | Filesort is needed to resolve the query. This means an extra phase where we first collect all columns to sort, sort them with a disk based merge sort and then use the sorted set to retrieve the rows in sorted order. If the column set is small, we store all the columns in the sort file to not have to go to the database to retrieve them again. |
+| `Using index`                                                | 只使用了索引就能够从表检索除需要的信息。不需要对实际的记录进行额外的查找 |
+| `Using index condition`                                      | 与 `Using where` 类似，但是使用了索引条件下推（ICP）在索引级别做了内部优化 |
+| `Using index condition(BKA)`                                 | 与 `Using index conditon` 类似，但是除此之外还是用了 BKA(Batched Key Access) 技术来提取行 |
+| `Using index for group-by`                                   | The index is being used to resolve a `GROUP BY` or `DISTINCT` query. The rows are not read. This is very efficient if the table has a lot of identical index entries as duplicates are quickly jumped over. |
+| `Using intersect(...)`                                       | For `index_merge` joins. Shows which index are part of the intersect. |
+| `Using join buffer`                                          | We store previous row combinations in a row buffer to be able to match each row against all of the rows combinations in the join buffer at one go. |
+| `Using sort_union(...)`                                      | For `index_merge` joins. Shows which index are part of the union. |
+| `Using temporary`                                            | A temporary table is created to hold the result. This typically happens if you are using `GROUP BY`, `DISTINCT` or `ORDER BY`. |
+| `Using where`                                                | A `WHERE` expression (in additional to the possible key lookup) is used to check if the row should be accepted. If you don't have 'Using where' together with a join type of `ALL`, you are probably doing something wrong! |
+| Using where with pushed condition | Like '`Using where`' but the where condition is pushed down to the table engine for internal optimization at the row level. |
+| `Using buffer`                                               | The `UPDATE` statement will first buffer the rows, and then run the updates, rather than do updates on the fly. See [Using Buffer UPDATE Algorithm](https://mariadb.com/kb/en/using-buffer-update-algorithm/) for a detailed explanation. |
+
+
+
+### EXPLAIN EXTENDED
+
+The `EXTENDED` keyword adds another column, *filtered*, to the output. This is a percentage estimate of the table rows that will be filtered by the condition.
+
+An `EXPLAIN EXTENDED` will always throw a warning, as it adds extra *Message* information to a subsequent `[SHOW WARNINGS](https://mariadb.com/kb/en/show-warnings/)` statement. This includes what the `SELECT` query would look like after optimizing and rewriting rules are applied and how the optimizer qualifies columns and tables.
+
+## 示例
+
+作为 `DESCRIBE` 或 `SHOW COLUMNS FROM` 的同义词:
+
+    DESCRIBE city;
+    +------------+----------+------+-----+---------+----------------+
+    | Field      | Type     | Null | Key | Default | Extra          |
+    +------------+----------+------+-----+---------+----------------+
+    | Id         | int(11)  | NO   | PRI | NULL    | auto_increment |
+    | Name       | char(35) | YES  |     | NULL    |                |
+    | Country    | char(3)  | NO   | UNI |         |                |
+    | District   | char(20) | YES  | MUL |         |                |
+    | Population | int(11)  | YES  |     | NULL    |                |
+    +------------+----------+------+-----+---------+----------------+
+
+
+A simple set of examples to see how `EXPLAIN` can identify poor index usage:
+
+    CREATE TABLE IF NOT EXISTS `employees_example` (
+      `id` int(11) NOT NULL AUTO_INCREMENT,
+      `first_name` varchar(30) NOT NULL,
+      `last_name` varchar(40) NOT NULL,
+      `position` varchar(25) NOT NULL,
+      `home_address` varchar(50) NOT NULL,
+      `home_phone` varchar(12) NOT NULL,
+      `employee_code` varchar(25) NOT NULL,
+      PRIMARY KEY (`id`),
+      UNIQUE KEY `employee_code` (`employee_code`),
+      KEY `first_name` (`first_name`,`last_name`)
+    ) ENGINE=Aria;
+    
+    INSERT INTO `employees_example` (`first_name`, `last_name`, `position`, `home_address`, `home_phone`, `employee_code`)
+      VALUES
+      ('Mustapha', 'Mond', 'Chief Executive Officer', '692 Promiscuous Plaza', '326-555-3492', 'MM1'),
+      ('Henry', 'Foster', 'Store Manager', '314 Savage Circle', '326-555-3847', 'HF1'),
+      ('Bernard', 'Marx', 'Cashier', '1240 Ambient Avenue', '326-555-8456', 'BM1'),
+      ('Lenina', 'Crowne', 'Cashier', '281 Bumblepuppy Boulevard', '328-555-2349', 'LC1'),
+      ('Fanny', 'Crowne', 'Restocker', '1023 Bokanovsky Lane', '326-555-6329', 'FC1'),
+      ('Helmholtz', 'Watson', 'Janitor', '944 Soma Court', '329-555-2478', 'HW1');
+    
+    SHOW INDEXES FROM employees_example;
+    +-------------------+------------+---------------+--------------+---------------+-----------+-------------+----------+--------+------+------------+---------+---------------+
+    | Table             | Non_unique | Key_name      | Seq_in_index | Column_name   | Collation | Cardinality | Sub_part | Packed | Null | Index_type | Comment | Index_comment |
+    +-------------------+------------+---------------+--------------+---------------+-----------+-------------+----------+--------+------+------------+---------+---------------+
+    | employees_example |          0 | PRIMARY       |            1 | id            | A         |           7 |     NULL | NULL   |      | BTREE      |         |               |
+    | employees_example |          0 | employee_code |            1 | employee_code | A         |           7 |     NULL | NULL   |      | BTREE      |         |               |
+    | employees_example |          1 | first_name    |            1 | first_name    | A         |        NULL |     NULL | NULL   |      | BTREE      |         |               |
+    | employees_example |          1 | first_name    |            2 | last_name     | A         |        NULL |     NULL | NULL   |      | BTREE      |         |               |
+    +-------------------+------------+---------------+--------------+---------------+-----------+-------------+----------+--------+------+------------+---------+---------------+
+
+
+`SELECT` on a primary key:
+
+    EXPLAIN SELECT * FROM employees_example WHERE id=1;
+    +------+-------------+-------------------+-------+---------------+---------+---------+-------+------+-------+
+    | id   | select_type | table             | type  | possible_keys | key     | key_len | ref   | rows | Extra |
+    +------+-------------+-------------------+-------+---------------+---------+---------+-------+------+-------+
+    |    1 | SIMPLE      | employees_example | const | PRIMARY       | PRIMARY | 4       | const |    1 |       |
+    +------+-------------+-------------------+-------+---------------+---------+---------+-------+------+-------+
+
+
+The type is *const*, which means that only one possible result could be returned. Now, returning the same record but searching by their phone number:
+
+    EXPLAIN SELECT * FROM employees_example WHERE home_phone='326-555-3492';
+    +------+-------------+-------------------+------+---------------+------+---------+------+------+-------------+
+    | id   | select_type | table             | type | possible_keys | key  | key_len | ref  | rows | Extra       |
+    +------+-------------+-------------------+------+---------------+------+---------+------+------+-------------+
+    |    1 | SIMPLE      | employees_example | ALL  | NULL          | NULL | NULL    | NULL |    6 | Using where |
+    +------+-------------+-------------------+------+---------------+------+---------+------+------+-------------+
+
+
+Here, the type is *All*, which means no index could be used. Looking at the rows count, a full table scan (all six rows) had to be performed in order to retrieve the record. If it's a requirement to search by phone number, an index will have to be created.
+
+`[SHOW EXPLAIN](https://mariadb.com/kb/en/show-explain/)` example:
+
+    SHOW EXPLAIN FOR 1;
+    +------+-------------+-------+-------+---------------+------+---------+------+---------+-------------+
+    | id   | select_type | table | type  | possible_keys | key  | key_len | ref  | rows    | Extra       |
+    +------+-------------+-------+-------+---------------+------+---------+------+---------+-------------+
+    |    1 | SIMPLE      | tbl   | index | NULL          | a    | 5       | NULL | 1000107 | Using index |
+    +------+-------------+-------+-------+---------------+------+---------+------+---------+-------------+
+    1 row in set, 1 warning (0.00 sec)
+
+
+### Example of `ref_or_null` optimization
+
+    SELECT * FROM table_name
+      WHERE key_column=expr OR key_column IS NULL;
+
+`ref_or_null` is something that often happens when you use subqueries with `NOT IN` as then one has to do an extra check for `NULL` values if the first value didn't have a matching row.
+
+## See also
+
+* [SHOW EXPLAIN](https://mariadb.com/kb/en/show-explain/)
+
+---
+
+原文：[EXPLAIN](https://mariadb.com/kb/en/explain/)
