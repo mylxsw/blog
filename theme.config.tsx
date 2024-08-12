@@ -7,7 +7,7 @@ const config: DocsThemeConfig = {
     link: 'https://github.com/mylxsw',
   },
   footer: {
-    text: new Date().getFullYear() + ' © by mylxsw | Powered by Nextra',
+    text: 'CC BY-NC 4.0 ' + new Date().getFullYear() + ' © mylxsw | Powered by Nextra',
   },
   editLink: {
     component: null,
@@ -15,6 +15,7 @@ const config: DocsThemeConfig = {
   feedback: {
     content: null,
   },
+  
 }
 
 export default config

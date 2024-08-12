@@ -1,5 +1,9 @@
 # Java 字符串 split 的一个反直觉陷阱
 
+import Meta from 'components/meta';
+
+<Meta author="mylxsw" date={new Date('2022-11-27')} tags={["java"]} /> 
+
 最近生产环境遇到一个奇怪的数组下标越界报错，如下图代码所示，我们可以肯定的是 `fieldName` 变量不为空（不是空字符串，也不是 `null`），但是代码执行到读取 `names[0]` 变量的时候，抛出了一个 **数组下标越界** （`java.lang.ArrayIndexOutOfBoundsException`） 的异常。
 
 ![](https://ssl.aicode.cc/mweb/2022-11-27-16695298707468.jpg?imageView2/2/w/800)

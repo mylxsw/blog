@@ -1,5 +1,9 @@
 # MongoDB 新手入门 - 索引
 
+import Meta from 'components/meta';
+
+<Meta author="mylxsw" date={new Date('2022-05-30')} tags={["mongodb"]} /> 
+
 索引可以有效的提高 MongoDB 的查询效率，如果没有索引，在匹配指定条件的文档时，MongoDB 必须执行全集合的扫描，对每一个文档进行判断是否满足查询条件。如果有合适的索引，那 MongoDB 就可以利用该索引来减少需要遍历的文档数量。
 
 ## 简介

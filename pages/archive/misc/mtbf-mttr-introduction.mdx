@@ -1,5 +1,9 @@
 # 根据 MTBF & MTTR 评估系统可用性
 
+import Meta from 'components/meta';
+
+<Meta author="mylxsw" date={new Date('2020-10-10')} tags={["concept"]} /> 
+
 **MTBF** *（Mean Time Between Failure）* 是平均无故障工作时间，单位是小时，表示相邻两次故障的时间间隔平均值，它是一种对系统可靠性的度量指标，这个值越大，说明系统越可靠。比如 数据库两次发生故障之间的时间间隔。
 
 **MTTR** *（Mean Time To Repair）* 是指平均修复时间，是指从故障发生到修复的时间间隔平均值，它是对系统维护性的一种度量指标，这个值越小，说明系统维护性越好。比如数据库故障转移的时间间隔。

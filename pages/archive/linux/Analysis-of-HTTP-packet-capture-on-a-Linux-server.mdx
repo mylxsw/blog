@@ -1,5 +1,9 @@
 # Linux 服务器下的 HTTP 抓包分析
 
+import Meta from 'components/meta';
+
+<Meta author="mylxsw" date={new Date('2018-07-16')} tags={["tcpdump", "command", "linux"]} /> 
+
 说到抓包分析，最简单的办法莫过于在客户端直接安装一个Wireshark或者Fiddler了，但是有时候由于客户端开发人员（可能是第三方）知识欠缺或者其它一些原因，无法顺利的在客户端进行抓包分析，这种情况下怎么办呢？
 
 本文中，我们将给大家介绍在服务端进行抓包分析的方法，使用tcpdump抓包，配合Wireshark对HTTP请求进行分析，非常简单有效。

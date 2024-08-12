@@ -2,7 +2,10 @@
   "index": {
     "type": "page",
     "title": "Home",
-    "display": "hidden"
+    "display": "hidden",
+    "theme": {
+      "typesetting": "article"
+    }
   },
   
   "ai": {

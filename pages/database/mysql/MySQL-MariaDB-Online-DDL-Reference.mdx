@@ -1,5 +1,9 @@
 # MySQL & MariaDB Online DDL 参考指南
 
+import Meta from 'components/meta';
+
+<Meta author="mylxsw" date={new Date('2020-10-26')} tags={["mysql"]} /> 
+
 ## 概述
 
 在早期的 MySQL 版本中，DDL 操作（如创建索引等）通常都需要对数据表加锁，操作过程中 DML 操作都会被阻塞，影响正常业务。MySQL 5.6 和 MariaDB 10.0 开始支持  Online  DDL，可以在执行 DDL 操作的同时，不影响 DML 的正常执行，线上直接执行 DDL 操作对用户基本无感知（部分操作对性能有影响）。

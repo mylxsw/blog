@@ -1,5 +1,9 @@
 # RabbitMQ发布订阅实战-实现延时重试队列
 
+import Meta from 'components/meta';
+
+<Meta author="mylxsw" date={new Date('2018-06-14')} tags={["rabbitmq", "queue"]} /> 
+
 RabbitMQ是一款使用Erlang开发的开源消息队列。本文假设读者对RabbitMQ是什么已经有了基本的了解，如果你还不知道它是什么以及可以用来做什么，建议先从官网的 [RabbitMQ Tutorials](http://www.rabbitmq.com/getstarted.html) 入门教程开始学习。
 
 本文将会讲解如何使用RabbitMQ实现延时重试和失败消息队列，实现可靠的消息消费，消费失败后，自动延时将消息重新投递，当达到一定的重试次数后，将消息投递到失败消息队列，等待人工介入处理。在这里我会带领大家一步一步的实现一个带有失败重试功能的发布订阅组件，使用该组件后可以非常简单的实现消息的发布订阅，在进行业务开发的时候，业务开发人员可以将主要精力放在业务逻辑实现上，而不需要花费时间去理解RabbitMQ的一些复杂概念。
