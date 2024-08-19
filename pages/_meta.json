@@ -1,5 +1,8 @@
 {
-  
+  "tutorial": {
+    "title": "Tutorial",
+    "type": "page"
+  },
   
   "ai": {
     "title": "AI",
