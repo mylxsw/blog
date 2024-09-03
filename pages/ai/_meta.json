@@ -1,4 +1,9 @@
 {
     "aidea-opensource-announce": "AIdea 宣布开源",
-    "screenshot-to-code-analysis": "Screenshot-to-code 原理分析"
+    "screenshot-to-code-analysis": "Screenshot-to-code 原理分析",
+    "note-machine-learning-1": "线性回归和逻辑回归代价函数解析",
+    "note-loss-vs-cost-function": "Loss vs Cost Function",
+    "note-sigmoid": "Sigmoid",
+    "note-regularization": "Regularization",
+    "note-normal-equation": "Normal Equation"
 }

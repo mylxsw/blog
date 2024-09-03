@@ -1,0 +1,54 @@
+# 跟 GPT 学 AI：线性回归和逻辑回归代价函数解析
+
+import Meta from 'components/meta';
+
+<Meta author="mylxsw" date={new Date('2024-09-03')} tags={["machine-learning"]} />
+
+
+import ChatBox from 'components/chat-box';
+import Image from 'next/image';
+
+<ChatBox type="info">
+这段内容我不太理解，请通俗易懂的向我解释一下：
+  <Image src="https://s.wy.is/article-images/2024/09/03/17253373390262.jpg" width={400} height={500} alt="线性回归和逻辑回归代价函数解析" />
+</ChatBox>
+
+
+这段内容主要是解释两种不同的代价函数（Cost Function），用于线性回归和逻辑回归的区别。
+
+1. **线性回归的代价函数**：  
+首先，对于线性回归（Linear Regression），代价函数（也叫损失函数）用于衡量模型预测值与实际值之间的差距。代价函数的公式是：
+   
+$$
+J(\theta) = \frac{1}{m} \sum_{i=1}^m \frac{1}{2} \left( h_\theta(x^{(i)}) - y^{(i)} \right)^2
+$$
+
+其中，$h_\theta(x^{(i)})$ 是模型的预测值，$ y^{(i)} $ 是实际值，$ m $ 是样本的总数。这个代价函数的核心思想是最小化预测值和实际值的平方差。
+
+1. **逻辑回归的代价函数**：  
+逻辑回归（Logistic Regression）用于分类问题，它的代价函数不能直接使用线性回归的平方差代价函数。因为逻辑回归的输出是一个概率值（0到1之间），我们希望这个代价函数能够反映模型在分类任务中的表现。于是，引入了下面的代价函数：
+
+$$
+J(\theta) = \frac{1}{m} \sum_{i=1}^m Cost\left(h_\theta(x^{(i)}), y^{(i)}\right)
+$$
+
+其中，$ Cost(h_\theta(x), y) $ 的定义为：
+
+$$
+Cost(h_\theta(x), y) = 
+\begin{cases} 
+- \log(h_\theta(x)) & \text{if } y = 1 \\
+- \log(1 - h_\theta(x)) & \text{if } y = 0 
+\end{cases}
+$$
+
+解释一下这个公式：  
+- 当实际值 $ y = 1 $ 时，我们希望预测值 $ h_\theta(x) $ 越接近 1 越好，如果预测结果接近 0（错误分类），那么代价就会变得非常大（因为 $ -\log(h_\theta(x)) $ 会趋向无穷大）。
+- 当实际值 $ y = 0 $ 时，我们希望预测值 $ h_\theta(x) $ 越接近 0 越好，如果预测结果接近 1（错误分类），同样代价也会变得非常大（因为 $ -\log(1 - h_\theta(x)) $ 会趋向无穷大）。
+
+3. **图的解释**：  
+右边的两幅图说明了代价函数的行为：
+- 如果 $ y = 1 $，那么当 $ h_\theta(x) $ 越接近 1，代价 $ Cost(h_\theta(x), y) $ 越小。
+- 如果 $ y = 0 $，那么当 $ h_\theta(x) $ 越接近 0，代价 $ Cost(h_\theta(x), y) $ 越小。
+
+总之，这个代价函数帮助逻辑回归模型在训练过程中不断调整参数，以便最小化错误分类的概率。
