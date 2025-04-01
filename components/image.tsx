@@ -9,7 +9,7 @@ const Image: React.FC<ImageProps> = ({ src, maxWidth }) => {
   return (
     <img 
       src={src}
-      style={{ maxWidth: maxWidth || '100%' }}
+      style={{ maxWidth: maxWidth, width: '100%' }}
       className="nx-rounded-lg nx-mx-auto mt-5 mb-5"
       alt=""
     />
