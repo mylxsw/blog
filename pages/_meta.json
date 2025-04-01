@@ -12,6 +12,10 @@
     "title": "Database",
     "type": "page"
   },
+  "note": {
+    "title": "Note",
+    "type": "page"
+  },
   "archive": {
     "title": "Archive",
     "type": "page"
