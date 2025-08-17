@@ -1,0 +1,153 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types:
+      - synchronize
+
+concurrency:
+  group: "deploy"
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.result }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set Version
+        id: version
+        uses: actions/github-script@v6
+        with:
+          result-encoding: string
+          script: |
+            return process.env.GITHUB_SHA.substring(0, 7);
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log into registry ${{ vars.REGISTRY }}
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ vars.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USER }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+  
+      - name: Build and push Docker image
+        id: build-and-push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ vars.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.result }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    if: ${{ github.event_name != 'pull_request' }}
+    needs:
+      - build
+    runs-on: ubuntu-latest
+    steps:
+    - name: Deploy docker container to k8s
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.SERVER_HOST }}
+        username: root
+        key: ${{ secrets.SERVER_SSH_KEY }}
+        script: |
+          echo ${{ vars.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build.outputs.version }} >> /tmp/image
+          cat > blog.k8s.yaml <<EOF
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: blog
+            labels:
+              app: blog
+              version: v1
+          spec:
+            selector:
+              matchLabels:
+                app: blog
+                version: v1
+            replicas: 1
+            strategy: 
+              type: RollingUpdate
+            template:
+              metadata:
+                labels:
+                  app: blog
+                  version: v1
+              spec:
+                containers:
+                  - name: blog
+                    image: ${{ vars.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build.outputs.version }}
+                    ports:
+                      - name: http-3000
+                        containerPort: 3000
+                        protocol: TCP
+                    resources:
+                      limits:
+                        cpu: "1"
+                        memory: "512Mi"
+                      requests:
+                        cpu: "100m"
+                        memory: "64Mi"
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: blog
+            labels:
+              app: blog
+          spec:
+            selector:
+              app: blog
+            ports:
+              - port: 80
+                targetPort: 3000
+                protocol: TCP
+                name: http-80
+
+          ---
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: blog
+            annotations:
+              cert-manager.io/cluster-issuer: "cloudflare-issuer"
+          spec:
+            rules:
+              - host: wy.is
+                http: &http
+                  paths:
+                    - backend:
+                        service:
+                          port:
+                            number: 80
+                          name: blog
+                      path: /
+                      pathType: Prefix
+              - host: wiki.gulu.ai
+                http: *http
+            tls:
+              - hosts:
+                - wy.is
+                - wiki.gulu.ai
+                secretName: blog-http-tls
+            ingressClassName: traefik
+          EOF
+
+          kubectl apply -f blog.k8s.yaml
+
+
