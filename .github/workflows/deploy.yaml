@@ -68,6 +68,9 @@ jobs:
         script: |
           echo ${{ secrets.REGISTRY_PASSWORD }} | docker login ${{ vars.REGISTRY }} -u ${{ secrets.REGISTRY_USER }} --password-stdin
 
+          mkdir -p /data/blog
+          cd /data/blog
+
           # Create docker-compose.yml for blog
           cat > docker-compose.yml <<EOF
           version: '3.8'
