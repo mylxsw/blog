@@ -1,13 +1,9 @@
 {
-  "tutorial": {
-    "title": "Tutorial",
+  "aigc": {
+    "title": "AIGC",
     "type": "page"
   },
   
-  "ai": {
-    "title": "AI",
-    "type": "page"
-  },
   "database": {
     "title": "Database",
     "type": "page"
