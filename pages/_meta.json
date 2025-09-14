@@ -1,6 +1,10 @@
 {
-  "aigc": {
-    "title": "AIGC",
+  "note": {
+    "title": "Note",
+    "type": "page"
+  },
+  "web3": {
+    "title": "Web3",
     "type": "page"
   },
   
@@ -8,10 +12,7 @@
     "title": "Database",
     "type": "page"
   },
-  "note": {
-    "title": "Note",
-    "type": "page"
-  },
+  
   "archive": {
     "title": "Archive",
     "type": "page"
