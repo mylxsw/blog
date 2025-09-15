@@ -1,10 +1,14 @@
 # 一文彻底搞懂区块链预言机：智能合约的“眼睛和耳朵”
 
+![Cover Image](https://resources.fallout.in/n8n/2025/09-15/OrNlLzqD.png)
+
 > **写给Web3新手的通俗科普：为什么智能合约看不见外面的世界？预言机是怎么帮它“看”的？**
 
 ---
 
 ## 一、核心问题：为什么智能合约是个“睁眼瞎”？
+
+![Chapter Image](https://resources.fallout.in/n8n/2025/09-15/CUJQuwvC.png)
 
 想象一下，区块链上的智能合约，就像一个被关在**绝对安全玻璃房**里的超级法官。
 
@@ -32,6 +36,8 @@
 
 ## 二、解决方案：预言机——现实世界与区块链的“信息快递员”
 
+![Chapter Image](https://resources.fallout.in/n8n/2025/09-15/dTuEqouK.png)
+
 “预言机”（英文：**Oracle**）这个名字有点玄乎，但它干的活非常朴实：
 
 > **它就是一个专门负责把真实世界的数据，“安全、准确、可靠”地搬运进区块链玻璃房的“快递员”或“桥梁”。**
@@ -41,6 +47,8 @@
 ---
 
 ## 三、预言机是怎么工作的？5步流水线揭秘
+
+![Chapter Image](https://resources.fallout.in/n8n/2025/09-15/SfXZBXEP.png)
 
 预言机不是魔法，而是一套精密的标准化流程。我们用一个“天气打赌”的例子，全程拆解：
 
@@ -107,6 +115,8 @@
 
 ## 四、预言机主要用在哪些地方？（应用场景）
 
+![Chapter Image](https://resources.fallout.in/n8n/2025/09-15/5BnIDtjn.png)
+
 没有预言机，就没有繁荣的DeFi和Web3生态！以下是最常见的应用：
 
 | 应用场景 | 例子 | 预言机提供什么数据？ |
@@ -123,6 +133,8 @@
 ---
 
 ## 五、为什么预言机必须“去中心化”？
+
+![Chapter Image](https://resources.fallout.in/n8n/2025/09-15/hAO6otlO.png)
 
 早期有“中心化预言机”，就是一个公司或一个人提供数据。这很危险！
 
@@ -150,6 +162,3 @@
 现在，当你再听到“预言机”这个词，就不会觉得它神秘了。它就是Web3世界里，让代码拥抱现实的**关键基础设施**，是智能合约真正的“眼睛”和“耳朵”。
 
 希望这篇科普能帮你轻松入门！
-
----
-> This article was created by AI at 2025-09-13 16:08:17 and is for reference only.
