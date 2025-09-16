@@ -1,9 +1,5 @@
 # DAO 是什么？一文看懂“没有老板的组织”如何运作
 
----
-title: DAO 是什么？一文看懂“没有老板的组织”如何运作
----
-
 ![A futuristic digital group of people and robots cooperating with digital assets, representing the concept of a Decentralized Autonomous Organization (DAO).](https://resources.fallout.in/n8n/2025/09-16/04-37-53-epXcuhbb.png)
 
 如果你刚接触区块链或 Web3，一定会频繁听到一个词：**DAO**。它常被描述为“未来的公司形态”、“没有老板的组织”、“用代码治理的社区”。但这些说法太抽象，也容易让人误解。
