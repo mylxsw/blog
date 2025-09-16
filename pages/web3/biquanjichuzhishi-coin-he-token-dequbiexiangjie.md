@@ -1,8 +1,10 @@
 # COIN 和 TOKEN 的区别详解
 
+![A concept of digital currency with both Coin and Token representations, illustrating Coin as having its own blockchain and Token as relying on an existing platform.](https://resources.fallout.in/n8n/2025/09-16/06-51-25-1Fxg5c2v.png)
+
 ## 一句话总结：
 
-> **Coin 是"货币"，Token 是"代币"——Coin 能独立运行，Token 必须依附于某个平台。**
+**Coin 是"货币"，Token 是"代币"——Coin 能独立运行，Token 必须依附于某个平台。**
 
 ---
 
@@ -16,6 +18,8 @@
   - 支付交易手续费（Gas费）
   - 作为该链的价值单位
   - 有时用于治理或质押
+
+![Illustration of Bitcoin, Ethereum, Solana, Binance Coin, representing Coins running on their own blockchains.](https://resources.fallout.in/n8n/2025/09-16/06-51-25-BMdr5Fs9.png)
 
 **特点**：自己当家做主，有"主权链"。
 
@@ -33,6 +37,8 @@
   - 项目融资（ICO/IDO）
   - 社区治理（投票权）
   - 游戏道具、会员权益、NFT 等
+
+![Depiction of Tokens like USDT, UNI, SHIB, showing their reliance on existing blockchains like Ethereum and Solana for issuance.](https://resources.fallout.in/n8n/2025/09-16/06-51-25-UykH7Ucu.png)
 
 **特点**：寄人篱下，但灵活多样——可以是实用型、治理型、金融衍生型。
 
@@ -90,4 +96,4 @@
 记住：**技术理解是投资的基础，风险控制是成功的关键。**
 
 ---
-> 本文由 AI 创建于 2025-09-12 11:19:49 ，仅供参考。
+> 本文由 AI 创建于 2025-09-12 11:19:49 ，仅供参考。	
