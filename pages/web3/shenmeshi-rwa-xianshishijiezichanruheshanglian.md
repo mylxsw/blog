@@ -1,6 +1,6 @@
 # 什么是 RWA？现实世界资产如何上链
 
-![A conceptual cover image showing the integration of real-world assets with blockchain technology in a digital financial ecosystem, featuring elements like buildings, gold, bonds, and digital tokens represented as cartoon-style illustrations.](https://resources.fallout.in/n8n/2025/09-16/05-43-51-J0qV2KGG.png) 
+![Cover image for an article about Real World Assets (RWA) and their blockchain integration, showing a blend of digital tokens, real estate, gold, and global financial symbols.](https://resources.fallout.in/n8n/2025/09-17/03-56-03-IKQHJvfv.png)
 
 如果你刚接触币圈，听到"RWA"这个词一头雾水，别慌。这不是什么神秘代码，而是一个正在悄悄改变金融世界的重要趋势。 
 
@@ -14,9 +14,9 @@
 
 ## 一、RWA 是什么？ 
 
-![Cartoon-style illustration of turning real-world assets like real estate, bonds, and gold into digital tokens using blockchain technology. Show a process of digitization and tokenization.](https://resources.fallout.in/n8n/2025/09-16/05-43-51-IMFFMIYW.png) 
-
 **RWA = Real World Assets**（现实世界资产，指现实中具有经济价值的资产，如房产、债券、黄金等，通过区块链技术"代币化"后上链流通） 
+
+![Real World Assets (RWA) concept, illustrating the tokenization of real estate, US bonds, gold, and invoices through blockchain technology.](https://resources.fallout.in/n8n/2025/09-17/03-56-03-Zf15BkEK.png)
 
 通俗说，就是把现实中值钱的东西： 
 - 美国国债
@@ -37,7 +37,7 @@
 
 ## 二、为什么现在 RWA 如此重要？ 
 
-![Cartoon-style illustration showing the importance of RWA (Real World Assets) with visuals like traditional finance merging with blockchain, symbolizing financial integration.](https://resources.fallout.in/n8n/2025/09-16/05-43-51-mzXKbNOP.png) 
+![Visual representation of the benefits of RWA, highlighting traditional financial institutions like BlackRock and tech elements like blockchain and decentralization.](https://resources.fallout.in/n8n/2025/09-17/03-56-03-QcnI16TJ.png)
 
 ### 1. 现实资产收益更具吸引力
 美联储加息使美国国债年化收益达4-5%，远超波动剧烈的"土狗币"（无价值支撑、靠炒作生存的高风险加密项目） 
@@ -54,7 +54,7 @@ Luna崩盘、FTX暴雷后，投资者规避"空气项目"（无底层资产、�
 
 ## 三、RWA 的上链实现原理
 
-![Illustration of the process of real-world assets going on-chain using digitalization, tokenization, custodial services, and blockchain circulation. Display a step-by-step process in cartoon style.](https://resources.fallout.in/n8n/2025/09-16/05-43-51-0CcNhmgC.png) 
+![Diagram of the process of bringing Real World Assets on-chain, showing asset verification, tokenization (ERC-20 tokens), custodial audit, and decentralized exchange trading.](https://resources.fallout.in/n8n/2025/09-17/03-56-03-fqMtPn6v.png)
 
 完成现实资产上链需要三大核心组件协同工作： 
 
@@ -81,8 +81,6 @@ Luna崩盘、FTX暴雷后，投资者规避"空气项目"（无底层资产、�
 --- 
 
 ### 法律组件：合规保障
-
-![Cartoon-style visual depiction of legal compliance in blockchain with elements like SPV, KYC, and legal frameworks ensuring asset security and regulatory adherence.](https://resources.fallout.in/n8n/2025/09-16/05-43-51-2VWqnqwl.png) 
 
 区块链无国界，但资产受地域监管约束： 
 1. **SPV**(Special Purpose Vehicle，特殊目的载体)  
@@ -115,7 +113,7 @@ Luna崩盘、FTX暴雷后，投资者规避"空气项目"（无底层资产、�
 
 ## 四、必须警惕的 RWA 陷阱
 
-![Illustration of potential risks and traps associated with improperly managed RWA projects, using a cartoon style to depict issues like lack of custody, non-compliance, high returns promises, and transparency myths.](https://resources.fallout.in/n8n/2025/09-16/05-43-51-ODH5EYPY.png) 
+![Chart illustrating common risks associated with RWA, including phrases like 'No Custodian', 'No KYC', 'Guaranteed Returns', and '100% Transparency', with warnings and legal concerns.](https://resources.fallout.in/n8n/2025/09-17/03-56-03-olI8LZK0.png)
 
 常见高风险特征解析： 
 
