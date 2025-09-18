@@ -1,6 +1,6 @@
 # DAO 是什么？一文看懂“没有老板的组织”如何运作
 
-![A futuristic digital group of people and robots cooperating with digital assets, representing the concept of a Decentralized Autonomous Organization (DAO).](https://resources.fallout.in/n8n/2025/09-16/04-37-53-epXcuhbb.png)
+![Futuristic DAO Structure](https://resources.fallout.in/n8n/2025/09-18/05-47-27-WFWmsTAx.png)
 
 如果你刚接触区块链或 Web3，一定会频繁听到一个词：**DAO**。它常被描述为“未来的公司形态”、“没有老板的组织”、“用代码治理的社区”。但这些说法太抽象，也容易让人误解。
 
@@ -19,8 +19,6 @@
 
 ## 一、DAO 是什么？一句话定义
 
-![Diagram demonstrating the decentralized, autonomous, and organizational aspects of a DAO.](https://resources.fallout.in/n8n/2025/09-16/04-37-53-5iszvYV2.png)
-
 > **DAO（Decentralized Autonomous Organization），中文叫“去中心化自治组织”，是一个由“代码规则 + 代币投票”驱动的协作组织，没有传统意义上的老板、办公室或劳动合同，但能共同管理资金、决策事务、执行项目。**
 
 你可以把它想象成：
@@ -31,7 +29,6 @@
 
 ## 二、DAO 的三大核心要素
 
-![Flowchart illustrating the three core pillars of DAO: Decentralized, Autonomous, Organizational.](https://resources.fallout.in/n8n/2025/09-16/04-37-53-fXkTa7Y9.png)
 
 一个真正的 DAO 必须同时具备以下三点：
 
@@ -56,11 +53,12 @@
 - MakerDAO：管理 DAI 稳定币系统（成功且年收入数亿美元）
 - Friends With Benefits：链上艺术社交俱乐部（用代币当门票）
 
+![DAO 三大核心要素图：去中心化、自治、组织（代币、智能合约、金库）](https://resources.fallout.in/n8n/2025/09-18/07-52-34-pR3lELGF.png)
+
 ---
 
 ## 三、DAO 是怎么运作的？
 
-![Flowchart of a DAO operation process illustrating governance framework deployment, token distribution, treasury setup, and proposal voting system.](https://resources.fallout.in/n8n/2025/09-16/04-37-53-fXkTa7Y9.png)
 
 虽然每个 DAO 结构略有不同，但基本都遵循以下四步流程：
 
@@ -93,11 +91,12 @@
 2. 社区在 Snapshot 或链上投票。
 3. 若通过，智能合约自动执行（如转账、修改参数）。
 
+![DAO 运作流程图：部署治理框架、发行代币、建立金库、提案投票执行](https://resources.fallout.in/n8n/2025/09-18/07-52-34-w55uyPQP.png)
+
 ---
 
 ## 四、DAO vs 传统公司：关键区别
 
-![Comparison chart of traditional company and DAO showing differences in control, rules, fund management, transparency, and efficiency.](https://resources.fallout.in/n8n/2025/09-16/04-37-53-vsJWgBe9.png)
 
 | 维度         | 传统公司                          | DAO                                |
 | ---          | ---                               | ---                                |
@@ -115,7 +114,6 @@
 
 ## 五、真实案例：Uniswap DAO
 
-![Illustration of Uniswap DAO's operation, highlighting UNI token distribution, voting mechanism, treasury information, and typical proposals.](https://resources.fallout.in/n8n/2025/09-16/04-37-53-ER9fkSdg.png)
 
 Uniswap 是全球最大的去中心化交易所（DEX），它的 DAO 是目前最活跃、资产规模最大的 DAO 之一。
 
@@ -150,11 +148,12 @@ Uniswap 是全球最大的去中心化交易所（DEX），它的 DAO 是目前�
 - **治理冷漠**：普通用户投票率 < 5%，决策常由专业治理组织主导。
 - **无经济模型**：UNI 不捕获协议收入，长期价值支撑薄弱。
 
+![Uniswap DAO 金库示意：UNI 代币、ETH、USDC 与治理投票](https://resources.fallout.in/n8n/2025/09-18/07-52-34-nUztKGAo.png)
+
 ---
 
 ## 六、DAO 的现实困境
 
-![Challenges faced by DAOs including centralization, inefficiency, legal identity, financial and security risks.](https://resources.fallout.in/n8n/2025/09-16/04-37-53-A1md7K1W.png)
 
 尽管 DAO 理念美好，但在实践中面临诸多挑战：
 
@@ -176,11 +175,11 @@ DAO 不是公司、不是合伙、不是基金，出了事谁负责？法院怎�
 - 多签管理员可能跑路或被黑。
 - 缺乏保险和追索机制。
 
+![DAO 现实困境图示：代币集中、效率低、法律模糊、金库与安全风险](https://resources.fallout.in/n8n/2025/09-18/07-52-34-LMJI5DKp.png)
+
 ---
 
-## 七、DAO 的真正价值是什么？
-
-![Illustration showing the real value of DAOs in managing protocols, enabling global collaboration, ensuring financial transparency, and exploring new collaboration forms.](https://resources.fallout.in/n8n/2025/09-16/04-37-53-uy4Yrg0z.png)
+## 七、DAO 的真正价值是什么？ 
 
 DAO 不是要“取代所有公司”，它的价值在于：
 
@@ -193,15 +192,13 @@ DAO 不是要“取代所有公司”，它的价值在于：
 
 ## 八、给初学者的建议
 
-![Advice for beginners interested in DAO, highlighting tips for users, investors, and potential DAO creators.](https://resources.fallout.in/n8n/2025/09-16/04-37-53-KAVbFQnd.png)
-
-### 如果你是用户或投资者：
+### 如果你是用户或投资者： 
 
 - 关注你持有代币的 DAO 提案，了解项目发展方向。
 - 查看代币分配是否公平（Etherscan 或 Nansen 查前 10 持仓）。
 - 警惕“纯治理无收益”代币，长期可能缺乏价值支撑。
 
-### 如果你想参与或创建 DAO：
+### 如果你想参与或创建 DAO： 
 
 - 问自己：这件事真的需要“去中心化投票”吗？还是微信群+支付宝更高效？
 - 从“小范围子 DAO”或“工作组”开始，避免主 DAO 的低效。
@@ -221,5 +218,8 @@ DAO 的进化才刚刚开始。未来，我们可能会看到：
 
 无论你是否看好它，DAO 已经成为 Web3 不可忽视的基础设施。理解它，是你进入这个新世界的重要一步。
 
+![DAO 未来路线图：高效投票、法律框架、可持续经济模型](https://resources.fallout.in/n8n/2025/09-18/07-52-34-JLuEWEyi.png)
+
 ---
-> This article was created by AI at 2025-09-16 04:52:08 and is for reference only.
+
+> This article was created by AI at 2025-09-16 04:52:08 and is for reference only.	
