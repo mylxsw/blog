@@ -1,9 +1,5 @@
 # 天才是训练的产物：《刻意练习》揭示普通人卓越的秘密
 
----
-
-# 天才是训练的产物：《刻意练习》揭示普通人卓越的秘密
-
 > 掌握正确方法，你也可以成为行业顶尖人物
 
 ![Cover image depicting deliberate practice](https://resources.fallout.in/n8n/2025/09-18/19-53-54-8q8Y2PpL.png)
